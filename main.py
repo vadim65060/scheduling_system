@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import List, Dict, Optional, Tuple
 
-from algorithms.TrueBalasDPC import DPC_BalasLenstra
+from algorithms.BaBBalasDPC import BalasBaBDPC
 from core.Algorithm import Algorithm
 from algorithms.exact_bb import ExactBranchAndBound
 from algorithms.exact_bf import ExactBruteForce
@@ -148,7 +148,7 @@ def _select_algorithm(jobs: List[Job],
         return MLTH(jobs, precedence)
     elif choice == "3":
         # Для BalasDPC явно укажем эвристику
-        return DPC_BalasLenstra(jobs, precedence)
+        return BalasBaBDPC(jobs, precedence)
     elif choice == "4":
         return ILTF(jobs, precedence)
     elif choice == "5":

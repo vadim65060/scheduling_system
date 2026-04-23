@@ -1,15 +1,15 @@
 """
 Точный алгоритм ветвей и границ для задачи 1|r_j, q_j, DPC|C_max
 Основан на статье Balas, Lenstra, Vazacopoulos (1995)
-Финальная версия с поиском критического пути через граф G(t).
+Полностью исправленная версия с учётом транзитивности DPC, корректной обратной задачей
+и улучшенным контролем повторных состояний.
 """
 
 import time
 from collections import defaultdict
-from typing import List, Dict, Tuple, Optional, Set
+from typing import List, Dict, Tuple, Optional, Set, FrozenSet
 
 from core.Algorithm import Algorithm
-from algorithms.lth import LTH
 from core.job import Job
 
 
@@ -38,13 +38,17 @@ class BalasBaBDPC(Algorithm):
         self.best_sigma = None
         self.best_pi = None
 
-        # Строим списки входящих DPC ОДИН РАЗ
-        self._incoming_dpc = defaultdict(list)
+    def _build_incoming_dpc(self, l_matrix=None) -> defaultdict:
+        """Строит список входящих DPC на основе текущей l_matrix."""
+        if l_matrix is None:
+            l_matrix = self.l_matrix
+        incoming = defaultdict(list)
         for i in self.jobs:
             for j in self.jobs:
-                lij = self.l_matrix[i][j]
+                lij = l_matrix[i][j]
                 if lij > 0:
-                    self._incoming_dpc[j].append((i, lij))
+                    incoming[j].append((i, lij))
+        return incoming
 
     def solve(self, **kwargs) -> Tuple[Optional[List[int]], float, Dict]:
         self.start_time = time.time()
@@ -58,29 +62,11 @@ class BalasBaBDPC(Algorithm):
 
         jobs_list = list(self.jobs.values())
 
-        precedence_dict = None
-        if self.l_matrix:
-            precedence_dict = {}
-            for i in self.jobs:
-                for j in self.jobs:
-                    if self.l_matrix[i][j] > 0:
-                        precedence_dict[(i, j)] = self.l_matrix[i][j]
-
+        # Проверка на взаимные DPC
         for i in self.jobs:
             for j in self.jobs:
                 if self.l_matrix[i][j] > 0 and self.l_matrix[j][i] > 0:
                     print(f"⚠️ WARNING: Mutual DPC between {i} and {j}")
-
-        boh = LTH(jobs_list, precedence_dict)
-        boh_schedule, boh_makespan, boh_stats = boh.solve(**kwargs)
-
-        # Устанавливаем начальные значения из эвристики
-        self.best_makespan = boh_makespan
-        self.best_schedule = boh_schedule.copy() if boh_schedule else None
-        initial_upper_bound = boh_makespan
-
-        best_heuristic_name = boh_stats.get("best_algorithm", "Unknown")
-        # =============================================================================
 
         initial_data = {
             'r': {j.id: j.r_i for j in jobs_list},
@@ -89,8 +75,25 @@ class BalasBaBDPC(Algorithm):
             'pi': defaultdict(set),
         }
 
-        # Запускаем B&B с хорошей верхней границей
-        self._branch_and_bound(initial_data, initial_upper_bound, depth=0, history=[])
+        # Инициализируем sigma/pi из заданных DPC
+        for i in self.jobs:
+            for j in self.jobs:
+                if self.l_matrix[i][j] > 0:
+                    self._add_precedence(initial_data['sigma'], initial_data['pi'], i, j)
+
+        # Используем внутренний LTH для начального решения
+        initial_schedule, initial_makespan, _ = self._longest_tail_heuristic(initial_data, self.l_matrix)
+
+        self.best_makespan = initial_makespan
+        self.best_schedule = initial_schedule.copy() if initial_schedule else None
+        self.best_sigma = {k: set(v) for k, v in initial_data['sigma'].items()}
+        self.best_pi = {k: set(v) for k, v in initial_data['pi'].items()}
+        initial_upper_bound = initial_makespan
+
+        print(f"Initial LTH makespan: {initial_makespan:.2f}")
+
+        # Запускаем B&B
+        self._branch_and_bound(initial_data, initial_upper_bound, depth=0, history=set())
 
         elapsed = time.time() - self.start_time
 
@@ -105,13 +108,22 @@ class BalasBaBDPC(Algorithm):
             'pruned_by_bound': self.pruned_by_bound,
             'pruned_by_test': self.pruned_by_test,
             'timed_out': self.timed_out,
-            'initial_heuristic': best_heuristic_name,
-            'initial_makespan': boh_makespan,
-            'improvement': boh_makespan - self.best_makespan if self.best_makespan < float('inf') else 0,
+            'initial_makespan': initial_makespan,
+            'improvement': initial_makespan - self.best_makespan if self.best_makespan < float('inf') else 0,
             'optimal': self.best_schedule is not None and not self.timed_out
         }
 
         return self.best_schedule, self.best_makespan, stats
+
+    def _update_best(self, schedule: List[int], makespan: float, data: Dict, upper_bound: float) -> float:
+        """Обновляет лучшее найденное решение."""
+        if makespan < self.best_makespan - 1e-6:
+            self.best_makespan = makespan
+            self.best_schedule = schedule.copy()
+            self.best_sigma = {k: set(v) for k, v in data['sigma'].items()}
+            self.best_pi = {k: set(v) for k, v in data['pi'].items()}
+            return min(upper_bound, makespan)
+        return upper_bound
 
     def _add_precedence(self, sigma: Dict[int, Set[int]], pi: Dict[int, Set[int]],
                         i: int, j: int) -> bool:
@@ -119,17 +131,13 @@ class BalasBaBDPC(Algorithm):
         Добавляет отношение i -> j с транзитивным замыканием.
         Возвращает False, если создаётся цикл.
         """
-        # Нельзя добавить отношение самому себе
         if i == j:
-            # print(f"⚠️ WARNING: Attempt to add self-precedence {i} -> {j}")
             return False
 
         if j in sigma.get(i, set()):
             return True  # уже есть
 
-        # Проверка на цикл: если j -> i уже существует, нельзя добавлять i -> j
         if i in sigma.get(j, set()):
-            # print(f"⚠️ WARNING: Cycle detected! Cannot add {i} -> {j} because {j} -> {i} exists")
             return False
 
         sigma[i].add(j)
@@ -137,13 +145,13 @@ class BalasBaBDPC(Algorithm):
 
         # Транзитивность: все, кто должны быть после j, теперь должны быть после i
         for k in list(sigma.get(j, set())):
-            if k != i:  # Защита от самопетли
+            if k != i:
                 if not self._add_precedence(sigma, pi, i, k):
                     return False
 
         # Транзитивность: все, кто должны быть перед i, теперь должны быть перед j
         for k in list(pi.get(i, set())):
-            if k != j:  # Защита от самопетли
+            if k != j:
                 if not self._add_precedence(sigma, pi, k, j):
                     return False
 
@@ -169,9 +177,13 @@ class BalasBaBDPC(Algorithm):
         return True
 
     def _is_precedence_arc(self, u: int, v: int, data: Dict,
-                           start_times: Dict[int, float], C_max: float) -> bool:
+                           start_times: Dict[int, float], C_max: float,
+                           l_matrix=None) -> bool:
         """Проверяет, является ли дуга (u,v) precedence arc любого типа (essential или нет)."""
-        if self.l_matrix[u][v] > 0:
+        if l_matrix is None:
+            l_matrix = self.l_matrix
+
+        if l_matrix[u][v] > 0:
             return True
 
         t_u = start_times.get(u, -float('inf'))
@@ -183,30 +195,45 @@ class BalasBaBDPC(Algorithm):
         return False
 
     def _find_critical_path_via_graph(self, schedule: List[int], start_times: Dict[int, float],
-                                      C_max: float, data: Dict) -> Optional[Dict]:
+                                      C_max: float, data: Dict, l_matrix=None) -> Optional[Dict]:
+        """Находит критический путь, игнорируя фиктивные работы."""
+        if l_matrix is None:
+            l_matrix = self.l_matrix
+
+        if not schedule:
+            return None
+
+        max_job_id = max(self.jobs.keys())
+
+        # Убираем фиктивные работы из расписания для анализа
+        real_schedule = [j for j in schedule if j not in (0, max_job_id)]
+        if not real_schedule:
+            return None
+
         # Быстрая проверка через fallback
-        result = self._find_critical_path_fallback(schedule, start_times, C_max, data)
-        if result is not None:
+        result = self._find_critical_path_fallback(schedule, start_times, C_max, data, l_matrix)
+        if result is not None and result['c'] not in (0, max_job_id):
             return result
 
-        # Если fallback не сработал — используем полный граф
+        # Если fallback не сработал или вернул фиктивную работу — строим граф только на реальных работах
         n = len(self.jobs)
         job_ids = list(self.jobs.keys())
         idx_map = {jid: i for i, jid in enumerate(job_ids)}
 
         N = n + 2
         o = n
-        t = n + 1
+        t_node = n + 1
 
         dist = [[-float('inf')] * N for _ in range(N)]
 
         for i, jid in enumerate(job_ids):
             dist[o][i] = data['r'][jid]
 
-        for idx_i, i in enumerate(schedule):
-            for idx_j, j in enumerate(schedule):
+        # Строим граф только для реальных работ
+        for idx_i, i in enumerate(real_schedule):
+            for idx_j, j in enumerate(real_schedule):
                 if idx_i < idx_j:
-                    lij = self.l_matrix[i][j]
+                    lij = l_matrix[i][j]
                     if lij > 0:
                         dist[idx_map[i]][idx_map[j]] = max(dist[idx_map[i]][idx_map[j]], lij)
                     else:
@@ -214,9 +241,10 @@ class BalasBaBDPC(Algorithm):
                                                            self.jobs[i].d_i)
 
         for i, jid in enumerate(job_ids):
-            dist[i][t] = self.jobs[jid].d_i + data['q'][jid]
+            dist[i][t_node] = self.jobs[jid].d_i + data['q'][jid]
 
-        topo = [o] + list(range(n)) + [t]
+        # Топологический порядок
+        topo = [o] + [idx_map[job] for job in real_schedule] + [t_node]
 
         longest = [-float('inf')] * N
         longest[o] = 0
@@ -227,57 +255,77 @@ class BalasBaBDPC(Algorithm):
                 continue
             for v in range(N):
                 if dist[u][v] > -float('inf'):
-                    if longest[u] + dist[u][v] > longest[v]:
+                    if longest[u] + dist[u][v] > longest[v] + 1e-6:
                         longest[v] = longest[u] + dist[u][v]
                         pred[v] = u
 
-        if longest[t] < C_max - 1e-6:
-            return None
+        if longest[t_node] < C_max - 1e-6:
+            # Ищем реальную работу с максимальным completion + q
+            best_c = None
+            best_val = 0
+            for j in real_schedule:
+                val = start_times[j] + self.jobs[j].d_i + data['q'][j]
+                if val > best_val + 1e-6:
+                    best_val = val
+                    best_c = j
+            if best_c is None:
+                return None
+            # Находим все работы после best_c в расписании
+            c_index = real_schedule.index(best_c) if best_c in real_schedule else 0
+            J = set(real_schedule[c_index + 1:])
+            return {
+                'critical_path': real_schedule,
+                'c': best_c,
+                'J': J,
+                'start_times': start_times
+            }
 
+        # Восстанавливаем путь
         path = []
-        v = t
+        v = t_node
         while v != o:
             u = pred[v]
             if u == -1:
                 break
-            if u != o and u != t:
+            if u != o and u != t_node:
                 path.insert(0, job_ids[u])
             v = u
 
         if not path:
             return None
 
-        c = None
+        # Ищем первую реальную работу в пути
+        real_c = None
         for jid in path:
-            if data['r'][jid] < start_times.get(jid, 0) - 1e-6:
-                c = jid
+            if jid not in (0, max_job_id):
+                real_c = jid
                 break
-        if c is None:
-            c = path[0] if path else None
 
-        if c is None:
+        if real_c is None:
             return None
 
-        c_index = path.index(c) if c in path else 0
+        c_index = path.index(real_c) if real_c in path else 0
         J = set(path[c_index + 1:])
+        J = {j for j in J if j not in (0, max_job_id)}
 
         return {
             'critical_path': path,
-            'c': c,
+            'c': real_c,
             'J': J,
             'start_times': start_times
         }
 
     def _find_critical_path_fallback(self, schedule: List[int], start_times: Dict[int, float],
-                                     C_max: float, data: Dict) -> Optional[Dict]:
+                                     C_max: float, data: Dict, l_matrix=None) -> Optional[Dict]:
+        if l_matrix is None:
+            l_matrix = self.l_matrix
+
         if not schedule:
             return None
 
         q = data['q']
         r = data['r']
 
-        # Строим обратный индекс для быстрого поиска
-        # Это позволяет найти предшественника за O(1) вместо O(n)
         pos_in_schedule = {job: idx for idx, job in enumerate(schedule)}
 
         current = None
@@ -295,7 +343,6 @@ class BalasBaBDPC(Algorithm):
             found = False
             curr_idx = pos_in_schedule[current]
 
-            # Проверяем только работы, идущие раньше в расписании
             for pred in schedule[:curr_idx]:
                 pred_end = start_times[pred] + self.jobs[pred].d_i
                 if abs(pred_end - start_times[current]) < 1e-6:
@@ -303,7 +350,7 @@ class BalasBaBDPC(Algorithm):
                     critical_path.insert(0, current)
                     found = True
                     break
-                lij = self.l_matrix[pred][current]
+                lij = l_matrix[pred][current]
                 if lij > 0:
                     if abs(start_times[pred] + lij - start_times[current]) < 1e-6:
                         current = pred
@@ -335,9 +382,12 @@ class BalasBaBDPC(Algorithm):
         }
 
     def _check_strong_branching_conditions(self, critical_info: Dict, data: Dict,
-                                           schedule: List[int], start_times: Dict,
-                                           C_max: float) -> bool:
+                                           start_times: Dict, C_max: float,
+                                           l_matrix=None) -> bool:
         """Проверяет условия теоремы 3.1 для всего сегмента C(c,n)."""
+        if l_matrix is None:
+            l_matrix = self.l_matrix
+
         critical_path = critical_info['critical_path']
         c = critical_info['c']
         J = critical_info['J']
@@ -352,7 +402,7 @@ class BalasBaBDPC(Algorithm):
 
         for i in range(len(segment) - 1):
             u, v = segment[i], segment[i + 1]
-            if self._is_precedence_arc(u, v, data, start_times, C_max):
+            if self._is_precedence_arc(u, v, data, start_times, C_max, l_matrix):
                 return False
 
         t_c = start_times[c]
@@ -363,7 +413,7 @@ class BalasBaBDPC(Algorithm):
 
         return True
 
-    def _branch_and_bound(self, data: Dict, upper_bound: float, depth: int, history: List[str]) -> None:
+    def _branch_and_bound(self, data: Dict, upper_bound: float, depth: int, history: Set[FrozenSet]) -> None:
         self.nodes_explored += 1
 
         if time.time() - self.start_time > self.time_limit:
@@ -373,89 +423,168 @@ class BalasBaBDPC(Algorithm):
         if depth > 3 * self.n:
             return
 
+        # Проверка на повторяющиеся состояния
+        state_key = self._get_state_key(data)
+        if state_key in history:
+            return
+        history.add(state_key)
+
         lb = self._calculate_lower_bound(data)
+
+        print(f"\n{'=' * 60}")
+        print(f"Depth {depth:2}: nodes={self.nodes_explored:5}, LB={lb:8.2f}, UB={upper_bound:8.2f}")
+
         if lb >= upper_bound - 1e-6:
+            print(f"  -> Pruned by bound")
             self.pruned_by_bound += 1
             return
 
-        schedule, makespan, start_times = self._longest_tail_heuristic(data)
+        schedule, makespan, start_times = self._longest_tail_heuristic(data, self.l_matrix)
+        print(f"  -> LTH makespan: {makespan:.2f}")
 
-        if makespan < self.best_makespan:
-            self.best_makespan = makespan
-            self.best_schedule = schedule.copy()
-            self.best_sigma = {k: set(v) for k, v in data['sigma'].items()}
-            self.best_pi = {k: set(v) for k, v in data['pi'].items()}
-            upper_bound = min(upper_bound, makespan)
-            if lb >= makespan - 1e-6:
-                return
+        upper_bound = self._update_best(schedule, makespan, data, upper_bound)
 
+        if lb >= makespan - 1e-6:
+            print(f"  -> LB >= makespan, optimal for this branch")
+            return
+
+        # Постпроцессинг
         while True:
-            changed = self._postprocess(data, schedule, start_times, makespan)
+            changed = self._postprocess(data, schedule, start_times, makespan, self.l_matrix)
             if not changed:
                 break
-            schedule, makespan, start_times = self._longest_tail_heuristic(data)
-            if makespan < self.best_makespan:
-                self.best_makespan = makespan
-                self.best_schedule = schedule.copy()
-                self.best_sigma = {k: set(v) for k, v in data['sigma'].items()}
-                self.best_pi = {k: set(v) for k, v in data['pi'].items()}
-                upper_bound = min(upper_bound, makespan)
+            schedule, makespan, start_times = self._longest_tail_heuristic(data, self.l_matrix)
+            upper_bound = self._update_best(schedule, makespan, data, upper_bound)
 
-        critical_info = self._find_critical_path_via_graph(schedule, start_times, makespan, data)
+        critical_info = self._find_critical_path_via_graph(schedule, start_times, makespan, data, self.l_matrix)
+        max_job_id = max(self.jobs.keys())
+
+        print(f"  -> critical_info: {critical_info is not None}")
+        if critical_info is not None:
+            print(f"  -> c={critical_info.get('c')}, J_size={len(critical_info.get('J', set()))}")
+
+        # Если нет критического пути или c фиктивный - возвращаем
         if critical_info is None:
+            print(f"  -> No critical path found, returning")
             return
 
         c = critical_info['c']
         J = critical_info['J']
 
-        if c == 0:
+        if c == 0 or c == max_job_id:
+            print(f"  -> c is dummy job, returning")
             return
 
+        if not J:
+            print(f"  -> J is empty, returning")
+            return
+
+        print(f"  -> final c={c}, J={sorted(J)[:5]}...")
+
         can_use_strong = self._check_strong_branching_conditions(
-            critical_info, data, schedule, start_times, makespan
+            critical_info, data, start_times, makespan, self.l_matrix
         )
+        print(f"  -> can_use_strong: {can_use_strong}")
 
         if can_use_strong:
             self.strong_branches += 1
             self._apply_strong_branching(data, c, J, upper_bound, depth + 1, history)
         else:
-            # Пробуем обратную задачу
-            reverse_data = self._create_reverse_problem(data)
-            original_l_matrix = self.l_matrix
-            self.l_matrix = self._get_reverse_l_matrix()
-            rev_schedule, rev_makespan, rev_starts = self._longest_tail_heuristic(reverse_data)
-            self.l_matrix = original_l_matrix
+            print(f"  -> trying reverse problem...")
+            rev_schedule, rev_makespan, rev_starts, rev_critical = self._solve_reverse_problem(
+                data, upper_bound, depth, history
+            )
 
-            rev_critical = self._find_critical_path_via_graph(rev_schedule, rev_starts, rev_makespan, reverse_data)
+            if rev_critical and rev_critical.get('c') not in (0, max_job_id):
+                if self._check_strong_branching_conditions(
+                        rev_critical, data, rev_starts, rev_makespan, self.l_matrix
+                ):
+                    self.strong_branches += 1
+                    rev_c = rev_critical['c']
+                    rev_J = rev_critical['J']
+                    print(f"  -> reverse strong branching: c={rev_c}")
+                    self._apply_strong_branching(data, rev_c, rev_J, upper_bound, depth + 1, history)
+                    return
 
-            if rev_critical and self._check_strong_branching_conditions(
-                    rev_critical, reverse_data, rev_schedule, rev_starts, rev_makespan
-            ):
-                self.strong_branches += 1
-                rev_c = rev_critical['c']
-                rev_J = rev_critical['J']
-                # ВАЖНО: инвертируем отношения при возврате из обратной задачи
-                self._apply_strong_branching_reversed(data, rev_c, rev_J, upper_bound, depth + 1, history)
-            else:
-                self.weak_branches += 1
-                self._apply_weak_branching(data, critical_info, upper_bound, depth + 1, history)
+            # Weak branching
+            self.weak_branches += 1
+            print(f"  -> weak branching")
+            self._apply_weak_branching(data, critical_info, upper_bound, depth + 1, history)
+
+    def _get_state_key(self, data: Dict) -> FrozenSet:
+        """Создает уникальный ключ для состояния."""
+        # Используем frozenset из пар (i, j) для sigma
+        sigma_pairs = frozenset((i, j) for i, next_set in data['sigma'].items() for j in next_set)
+        # Также учитываем r и q (округляем для стабильности)
+        r = data['r']
+        q = data['q']
+        r_tuples = frozenset((i, round(r[i], 2)) for i in sorted(r.keys()))
+        q_tuples = frozenset((i, round(q[i], 2)) for i in sorted(q.keys()))
+        return frozenset([sigma_pairs, r_tuples, q_tuples])
+
+    def _solve_reverse_problem(self, data: Dict, upper_bound: float, depth: int, history: Set[FrozenSet]):
+        """
+        Решает обратную задачу: инвертирует DPC и направления предшествования,
+        затем вызывает LTH, разворачивает расписание и возвращает его в исходной ориентации.
+        """
+        job_ids = list(self.jobs.keys())
+
+        # Строим инвертированную матрицу DPC
+        rev_l_matrix = self._get_reverse_l_matrix()
+
+        # Создаём обратные данные: меняем r и q местами
+        rev_data = {
+            'r': {j: data['q'][j] for j in job_ids},
+            'q': {j: data['r'][j] for j in job_ids},
+            'sigma': defaultdict(set),
+            'pi': defaultdict(set)
+        }
+        # Инвертируем предшествования из data['sigma']/['pi']
+        for i in job_ids:
+            for j in data['sigma'].get(i, set()):
+                rev_data['sigma'][j].add(i)
+                rev_data['pi'][i].add(j)
+
+        # Также добавляем в rev_data все DPC как жёсткие предшествования
+        for i in job_ids:
+            for j in job_ids:
+                if rev_l_matrix[i][j] > 0:
+                    rev_data['sigma'][i].add(j)
+                    rev_data['pi'][j].add(i)
+
+        # Запускаем LTH на обратной задаче
+        rev_schedule, rev_makespan, rev_starts = self._longest_tail_heuristic(rev_data, rev_l_matrix)
+
+        # Разворачиваем расписание, чтобы получить прямой порядок
+        rev_schedule.reverse()
+
+        # Пересчитываем start_times и C_max для прямого расписания
+        forward_start = {}
+        current = 0.0
+        for job in rev_schedule:
+            start = max(data['r'][job], current)
+            # Учитываем DPC от уже запланированных (в прямом порядке)
+            for pred in rev_schedule:
+                if pred == job:
+                    break
+                lij = self.l_matrix[pred][job]
+                if lij > 0:
+                    start = max(start, forward_start[pred] + self.jobs[pred].d_i + lij)
+            forward_start[job] = start
+            current = start + self.jobs[job].d_i
+
+        forward_makespan = max(forward_start[j] + self.jobs[j].d_i + data['q'][j] for j in rev_schedule)
+
+        # Анализируем критический путь уже на прямом расписании
+        critical_info = self._find_critical_path_via_graph(rev_schedule, forward_start, forward_makespan, data)
+
+        return rev_schedule, forward_makespan, forward_start, critical_info
 
     def _apply_weak_branching(self, data: Dict, critical_info: Dict, upper_bound: float,
-                              depth: int, history: List[str]) -> None:
+                              depth: int, history: Set[FrozenSet]) -> None:
         i, j = self._select_weak_branching_pair(data, critical_info)
         if i is None or j is None:
             return
-
-        # Усиленная защита от зацикливания
-        state_id = f"weak_{i}_{j}"
-        if state_id in history:
-            return
-
-        # Ограничиваем историю
-        if len(history) > 20:
-            return
-
-        new_history = history + [state_id]
 
         sigma = data['sigma']
         pi = data['pi']
@@ -471,9 +600,6 @@ class BalasBaBDPC(Algorithm):
         if not i_before_j_possible and not j_before_i_possible:
             return
 
-        # ВАЖНО: сначала пробуем более перспективную ветвь
-        # Обычно ветвь, которая соответствует порядку в критическом пути, более перспективна
-        # Определяем, какая работа идёт раньше в critical_path
         critical_path = critical_info['critical_path']
         try:
             idx_i = critical_path.index(i)
@@ -482,235 +608,106 @@ class BalasBaBDPC(Algorithm):
         except ValueError:
             i_before_j_in_path = False
 
+        # ВАЖНО: сначала пробуем более перспективную ветвь (соответствующую критическому пути)
         if i_before_j_possible and i_before_j_in_path:
-            data1 = self._copy_data(data)
-            self._add_precedence(data1['sigma'], data1['pi'], i, j)
-            lij = self.l_matrix[i][j]
-            data1['r'][j] = max(data1['r'][j], data1['r'][i] + self.jobs[i].d_i + lij)
-            self._branch_and_bound(data1, upper_bound, depth, new_history)
-
+            self._branch_on_relation(data, i, j, upper_bound, depth, history)
             if j_before_i_possible:
-                data2 = self._copy_data(data)
-                self._add_precedence(data2['sigma'], data2['pi'], j, i)
-                lji = self.l_matrix[j][i]
-                data2['r'][i] = max(data2['r'][i], data2['r'][j] + self.jobs[j].d_i + lji)
-                self._branch_and_bound(data2, upper_bound, depth, new_history)
+                self._branch_on_relation(data, j, i, upper_bound, depth, history)
         elif j_before_i_possible:
-            data2 = self._copy_data(data)
-            self._add_precedence(data2['sigma'], data2['pi'], j, i)
-            lji = self.l_matrix[j][i]
-            data2['r'][i] = max(data2['r'][i], data2['r'][j] + self.jobs[j].d_i + lji)
-            self._branch_and_bound(data2, upper_bound, depth, new_history)
-
+            self._branch_on_relation(data, j, i, upper_bound, depth, history)
             if i_before_j_possible:
-                data1 = self._copy_data(data)
-                self._add_precedence(data1['sigma'], data1['pi'], i, j)
-                lij = self.l_matrix[i][j]
-                data1['r'][j] = max(data1['r'][j], data1['r'][i] + self.jobs[i].d_i + lij)
-                self._branch_and_bound(data1, upper_bound, depth, new_history)
+                self._branch_on_relation(data, i, j, upper_bound, depth, history)
         elif i_before_j_possible:
-            data1 = self._copy_data(data)
-            self._add_precedence(data1['sigma'], data1['pi'], i, j)
-            lij = self.l_matrix[i][j]
-            data1['r'][j] = max(data1['r'][j], data1['r'][i] + self.jobs[i].d_i + lij)
-            self._branch_and_bound(data1, upper_bound, depth, new_history)
+            self._branch_on_relation(data, i, j, upper_bound, depth, history)
 
-    def _apply_strong_branching_reversed(self, data: Dict, c: int, J: Set[int],
-                                          upper_bound: float, depth: int, history: List[str]) -> None:
-        """Применяет сильное ветвление, полученное из обратной задачи."""
-        if self._carlier_tests_reversed(data, c, J, upper_bound):
-            self.pruned_by_test += 1
+    def _branch_on_relation(self, data: Dict, first: int, second: int,
+                            upper_bound: float, depth: int, history: Set[FrozenSet]) -> None:
+        """Создаёт новую ветвь с добавленным отношением first -> second."""
+        new_data = self._copy_data(data)
+        if not self._add_precedence(new_data['sigma'], new_data['pi'], first, second):
             return
 
-        data1 = self._copy_data(data)
-        for j in J:
-            self._add_precedence(data1['sigma'], data1['pi'], j, c)
-            data1['r'][c] = max(data1['r'][c], data1['r'][j] + self.jobs[j].d_i + self.l_matrix[j][c])
-        self._branch_and_bound(data1, upper_bound, depth, history)
+        lij = self.l_matrix[first][second]
+        # Исправление: lij уже включает d_i, не добавляем его повторно
+        new_data['r'][second] = max(new_data['r'][second],
+                                    new_data['r'][first] + lij)
+        new_data['q'][first] = max(new_data['q'][first],
+                                   new_data['q'][second] + lij - self.jobs[first].d_i)
 
-        data2 = self._copy_data(data)
-        for j in J:
-            self._add_precedence(data2['sigma'], data2['pi'], c, j)
-            data2['r'][j] = max(data2['r'][j], data2['r'][c] + self.jobs[c].d_i + self.l_matrix[c][j])
-        self._branch_and_bound(data2, upper_bound, depth, history)
-
-    def _carlier_tests_reversed(self, data: Dict, c: int, J: Set[int], upper_bound: float) -> bool:
-        r = data['r']
-        q = data['q']
-
-        min_r_J = min(r[j] for j in J) if J else float('inf')
-        sum_d_J = sum(self.jobs[j].d_i for j in J)
-        min_q_J = min(q[j] for j in J) if J else float('inf')
-        h_J = min_r_J + sum_d_J + min_q_J
-
-        all_jobs = set(self.jobs.keys())
-        K = {k for k in all_jobs - J - {c}
-             if self.jobs[k].d_i > upper_bound - h_J}
-
-        for k in K:
-            if min_r_J + sum_d_J + self.jobs[k].d_i + q[k] >= upper_bound - 1e-6:
-                return True
-        return False
-
-    def _calculate_lower_bound(self, data: Dict) -> float:
-        r = data['r']
-        q = data['q']
-
-        if not self.jobs:
-            return 0.0
-
-        # ОПТИМИЗАЦИЯ: кэшируем суммы
-        if not hasattr(self, '_total_d'):
-            self._total_d = sum(j.d_i for j in self.jobs.values())
-
-        min_r = min(r.values())
-        min_q = min(q.values())
-        lb1 = min_r + self._total_d + min_q
-
-        # ОПТИМИЗАЦИЯ: вычисляем lb2 только если есть DPC
-        lb2 = 0.0
-        if self.l_matrix:
-            # Проверяем только пары с ненулевыми задержками
-            for i in self.jobs:
-                for j in self.jobs:
-                    lij = self.l_matrix[i][j]
-                    if lij > 0:
-                        path_length = r[i] + self.jobs[i].d_i + lij + q[j]
-                        if path_length > lb2:
-                            lb2 = path_length
-
-        return max(lb1, lb2)
-
-    def _longest_tail_heuristic(self, data: Dict) -> Tuple[List[int], float, Dict[int, float]]:
-        r = data['r'].copy()
-        q = data['q'].copy()
-        sigma = data['sigma']
-
-        unscheduled = set(self.jobs.keys())
-        schedule = []
-        start_times = {}
-        current_time = 0.0
-
-        incoming_dpc = self._incoming_dpc
-
-        # Счётчик итераций для предотвращения бесконечного цикла
-        max_iterations = len(unscheduled) * 2
-        iteration = 0
-
-        while unscheduled and iteration < max_iterations:
-            iteration += 1
-            best_job = None
-            best_q = -float('inf')
-            best_start = 0
-
-            for job_id in unscheduled:
-                preds = sigma.get(job_id)
-                if preds:
-                    can_schedule = True
-                    for pred in preds:
-                        if pred in unscheduled:
-                            can_schedule = False
-                            break
-                    if not can_schedule:
-                        continue
-
-                start = r[job_id]
-                if current_time > start:
-                    start = current_time
-
-                dpc_list = incoming_dpc.get(job_id)
-                if dpc_list:
-                    for s_id, lij in dpc_list:
-                        if s_id in start_times:
-                            candidate = start_times[s_id] + lij
-                            if candidate > start:
-                                start = candidate
-
-                q_val = q[job_id]
-                if q_val > best_q or (q_val == best_q and start < best_start):
-                    best_q = q_val
-                    best_job = job_id
-                    best_start = start
-
-            if best_job is None:
-                # Застряли — печатаем отладочную информацию
-                print(f"⚠️ LTH stuck! Unscheduled: {len(unscheduled)} jobs")
-                print(f"   Jobs with unmet predecessors:")
-                for job_id in unscheduled:
-                    preds = sigma.get(job_id, set())
-                    unmet = [p for p in preds if p in unscheduled]
-                    if unmet:
-                        print(f"   Job {job_id} waiting for: {unmet}")
-                break
-
-            start_times[best_job] = best_start
-            schedule.append(best_job)
-            current_time = best_start + self.jobs[best_job].d_i
-            unscheduled.remove(best_job)
-
-        if unscheduled:
-            # Если остались незапланированные работы — добавляем их в конец
-            print(f"⚠️ Warning: {len(unscheduled)} jobs could not be scheduled normally")
-            for job_id in list(unscheduled):
-                start = max(r[job_id], current_time)
-                for s_id, lij in incoming_dpc[job_id]:
-                    if s_id in start_times:
-                        candidate = start_times[s_id] + lij
-                        if candidate > start:
-                            start = candidate
-                start_times[job_id] = start
-                schedule.append(job_id)
-                current_time = start + self.jobs[job_id].d_i
-
-        # Вычисление C_max
-        C_max = 0.0
-        for j in schedule:
-            delivery_end = start_times[j] + self.jobs[j].d_i + q[j]
-            if delivery_end > C_max:
-                C_max = delivery_end
-
-        return schedule, C_max, start_times
+        self._branch_and_bound(new_data, upper_bound, depth, history)
 
     def _apply_strong_branching(self, data: Dict, c: int, J: Set[int], upper_bound: float,
-                                depth: int, history: List[str]) -> None:
+                                depth: int, history: Set[FrozenSet]) -> None:
+        """Применяет сильное ветвление: c -> J и J -> c."""
+        max_job_id = max(self.jobs.keys())
+
+        if c == 0 or c == max_job_id:
+            return
+
+        if not J:
+            return
+
         if self._carlier_tests(data, c, J, upper_bound):
             self.pruned_by_test += 1
             return
 
+        # Ветвь 1: c -> J
         data1 = self._copy_data(data)
+        valid_branch1 = True
         for j in J:
-            self._add_precedence(data1['sigma'], data1['pi'], c, j)
-            data1['r'][j] = max(data1['r'][j], data1['r'][c] + self.jobs[c].d_i + self.l_matrix[c][j])
-        self._branch_and_bound(data1, upper_bound, depth, history)
+            if not self._add_precedence(data1['sigma'], data1['pi'], c, j):
+                valid_branch1 = False
+                break
+            lij = self.l_matrix[c][j]
+            # Исправление: lij уже включает d_i
+            data1['r'][j] = max(data1['r'][j], data1['r'][c] + lij)
 
+        if valid_branch1:
+            self._branch_and_bound(data1, upper_bound, depth, history)
+
+        # Ветвь 2: J -> c
         data2 = self._copy_data(data)
+        valid_branch2 = True
         for j in J:
-            self._add_precedence(data2['sigma'], data2['pi'], j, c)
-        for j in J:
-            data2['q'][j] = max(data2['q'][j], data2['q'][c] + self.jobs[c].d_i + self.l_matrix[j][c])
-        self._branch_and_bound(data2, upper_bound, depth, history)
+            if not self._add_precedence(data2['sigma'], data2['pi'], j, c):
+                valid_branch2 = False
+                break
+            lij = self.l_matrix[j][c]
+            # Исправление: lij уже включает d_i
+            data2['q'][j] = max(data2['q'][j],
+                                data2['q'][c] + lij - self.jobs[j].d_i)
+
+        if valid_branch2:
+            self._branch_and_bound(data2, upper_bound, depth, history)
 
     def _carlier_tests(self, data: Dict, c: int, J: Set[int], upper_bound: float) -> bool:
+        """Тесты Карлье для отсечения ветвей."""
         r = data['r']
         q = data['q']
 
-        min_r_J = min(r[j] for j in J) if J else float('inf')
+        if not J:
+            return False
+
+        min_r_J = min(r[j] for j in J)
         sum_d_J = sum(self.jobs[j].d_i for j in J)
-        min_q_J = min(q[j] for j in J) if J else float('inf')
+        min_q_J = min(q[j] for j in J)
         h_J = min_r_J + sum_d_J + min_q_J
 
         all_jobs = set(self.jobs.keys())
         K = {k for k in all_jobs - J - {c}
              if self.jobs[k].d_i > upper_bound - h_J}
 
+        # Тест 1: k должен быть после J
         for k in K:
             if r[c] + self.jobs[c].d_i + sum_d_J + q[k] >= upper_bound - 1e-6:
                 return True
+
+        # Тест 2: k должен быть перед J
         for k in K:
             if min_r_J + sum_d_J + self.jobs[k].d_i + q[k] >= upper_bound - 1e-6:
                 return True
-        return False
 
+        return False
 
     def _select_weak_branching_pair(self, data: Dict, critical_info: Dict) -> Tuple[Optional[int], Optional[int]]:
         critical_path = critical_info['critical_path']
@@ -718,6 +715,7 @@ class BalasBaBDPC(Algorithm):
         start_times = critical_info['start_times']
         c = critical_info['c']
         C_max = self.best_makespan
+        max_job_id = max(self.jobs.keys())
 
         try:
             c_index = critical_path.index(c)
@@ -729,18 +727,28 @@ class BalasBaBDPC(Algorithm):
         essential_arc = None
         for idx in range(len(segment) - 1, 0, -1):
             u, v = segment[idx - 1], segment[idx]
-            if self._is_essential_precedence_arc(u, v, data, start_times, C_max):
-                essential_arc = (u, v)
-                break
+            if u not in (0, max_job_id) and v not in (0, max_job_id):
+                if self._is_essential_precedence_arc(u, v, data, start_times, C_max):
+                    essential_arc = (u, v)
+                    break
 
         if essential_arc is None:
-            j = c if c != 0 else critical_path[0]
+            j = c if c not in (0, max_job_id) else critical_path[0]
+            # Пропускаем фиктивные работы
+            if j in (0, max_job_id):
+                for node in segment:
+                    if node not in (0, max_job_id):
+                        j = node
+                        break
+                else:
+                    return None, None
+
             t_j = start_times[j]
             for node in segment:
-                if r[node] < max(start_times[node], t_j) - 1e-6:
+                if node not in (0, max_job_id) and r[node] < max(start_times[node], t_j) - 1e-6:
                     if not self._are_ordered(node, j, data) and not self._are_ordered(j, node, data):
                         return node, j
-            return c, j
+            return c if c not in (0, max_job_id) else j, j
         else:
             k, l = essential_arc
             j = l
@@ -750,11 +758,13 @@ class BalasBaBDPC(Algorithm):
                 return None, None
             segment_l = critical_path[l_index:]
             for node in segment_l:
-                if node != l and r[node] < start_times[l] - 1e-6:
+                if node not in (0, max_job_id) and node != l and r[node] < start_times[l] - 1e-6:
                     if not self._are_ordered(node, j, data) and not self._are_ordered(j, node, data):
                         return node, j
             if len(segment_l) > 1:
-                return segment_l[0], j
+                for node in segment_l:
+                    if node not in (0, max_job_id):
+                        return node, j
             return None, None
 
     def _are_ordered(self, i: int, j: int, data: Dict) -> bool:
@@ -767,13 +777,17 @@ class BalasBaBDPC(Algorithm):
         return False
 
     def _postprocess(self, data: Dict, schedule: List[int],
-                     start_times: Dict[int, float], C_max: float) -> bool:
+                     start_times: Dict[int, float], C_max: float, l_matrix=None) -> bool:
+        if l_matrix is None:
+            l_matrix = self.l_matrix
+
         changed = False
         r = data['r']
         q = data['q']
         sigma = data['sigma']
         pi = data['pi']
 
+        # Proposition 3.3: обновление r
         for idx, j in enumerate(schedule):
             segment_has_prec = False
             for k in range(idx, len(schedule) - 1):
@@ -798,7 +812,7 @@ class BalasBaBDPC(Algorithm):
 
             if conditions_hold:
                 for k in K:
-                    new_r = t_j + self.jobs[j].d_i + self.l_matrix[j][k]
+                    new_r = t_j + self.jobs[j].d_i + l_matrix[j][k]
                     if new_r > r[k] + 1e-6:
                         r[k] = new_r
                         changed = True
@@ -806,6 +820,7 @@ class BalasBaBDPC(Algorithm):
                         self._add_precedence(sigma, pi, j, k)
                         changed = True
 
+        # Proposition 3.4: обновление q
         for idx in range(len(schedule) - 1, -1, -1):
             i = schedule[idx]
             segment_has_prec = False
@@ -831,7 +846,7 @@ class BalasBaBDPC(Algorithm):
 
             if conditions_hold:
                 for k in K:
-                    new_q = q[i] + self.jobs[i].d_i + self.l_matrix[k][i] - self.jobs[k].d_i
+                    new_q = q[i] + self.jobs[i].d_i + l_matrix[k][i] - self.jobs[k].d_i
                     if new_q > q[k] + 1e-6:
                         q[k] = new_q
                         changed = True
@@ -841,17 +856,111 @@ class BalasBaBDPC(Algorithm):
 
         return changed
 
+    def _calculate_lower_bound(self, data: Dict) -> float:
+        r = data['r']
+        q = data['q']
+
+        if not self.jobs:
+            return 0.0
+
+        if not hasattr(self, '_total_d'):
+            self._total_d = sum(j.d_i for j in self.jobs.values())
+
+        min_r = min(r.values())
+        min_q = min(q.values())
+        lb1 = min_r + self._total_d + min_q
+
+        lb2 = 0.0
+        if self.l_matrix:
+            for i in self.jobs:
+                for j in self.jobs:
+                    lij = self.l_matrix[i][j]
+                    if lij > 0:
+                        path_length = r[i] + self.jobs[i].d_i + lij + q[j]
+                        if path_length > lb2:
+                            lb2 = path_length
+
+        return max(lb1, lb2)
+
+    def _longest_tail_heuristic(self, data: Dict, l_matrix=None) -> Tuple[List[int], float, Dict[int, float]]:
+        if l_matrix is None:
+            l_matrix = self.l_matrix
+
+        r = data['r'].copy()
+        q = data['q'].copy()
+        pi = data['pi']
+
+        unscheduled = set(self.jobs.keys())
+        schedule = []
+        start_times = {}
+        current_time = 0.0
+
+        incoming_dpc = self._build_incoming_dpc(l_matrix)
+
+        while unscheduled:
+            best_job = None
+            best_q = -float('inf')
+            best_start = float('inf')
+
+            for job_id in unscheduled:
+                preds = pi.get(job_id)
+                if preds and any(p in unscheduled for p in preds):
+                    continue
+
+                # Вычисляем earliest start с учётом уже запланированных работ и DPC
+                start = r[job_id]
+                dpc_list = incoming_dpc.get(job_id)
+                if dpc_list:
+                    for s_id, lij in dpc_list:
+                        if s_id in start_times:
+                            start = max(start, start_times[s_id] + lij)
+                start = max(start, current_time)
+
+                q_val = q[job_id]
+                if q_val > best_q or (abs(q_val - best_q) < 1e-6 and start < best_start):
+                    best_q = q_val
+                    best_job = job_id
+                    best_start = start
+
+            if best_job is None:
+                # Fallback: берём любую доступную
+                for job_id in unscheduled:
+                    if not pi.get(job_id) or all(p not in unscheduled for p in pi[job_id]):
+                        best_job = job_id
+                        best_start = max(r[job_id], current_time)
+                        break
+
+            start_times[best_job] = best_start
+            schedule.append(best_job)
+            current_time = best_start + self.jobs[best_job].d_i
+            unscheduled.remove(best_job)
+
+            # Обновляем r для оставшихся работ с учётом новой запланированной
+            for other in unscheduled:
+                lij = l_matrix[best_job][other]
+                if lij > 0:
+                    # Исправление: lij уже включает d_i, не добавляем его повторно
+                    r[other] = max(r[other], best_start + lij)
+
+        C_max = 0.0
+        for j in schedule:
+            delivery_end = start_times[j] + self.jobs[j].d_i + q[j]
+            C_max = max(C_max, delivery_end)
+
+        return schedule, C_max, start_times
+
     def _create_reverse_problem(self, data: Dict) -> Dict:
         r = data['r']
         q = data['q']
         return {
             'r': {j: q[j] for j in self.jobs.keys()},
             'q': {j: r[j] for j in self.jobs.keys()},
-            'sigma': data['pi'].copy(),
-            'pi': data['sigma'].copy(),
+            'sigma': defaultdict(set, {k: v.copy() for k, v in data['pi'].items()}),
+            'pi': defaultdict(set, {k: v.copy() for k, v in data['sigma'].items()}),
         }
 
     def _get_reverse_l_matrix(self):
+        """Создаёт обратную матрицу DPC."""
         rev = defaultdict(lambda: defaultdict(float))
         for i in self.jobs:
             for j in self.jobs:
