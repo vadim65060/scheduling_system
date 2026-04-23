@@ -13,6 +13,18 @@ from core.Algorithm import Algorithm
 from core.job import Job
 
 
+# ============================================================
+# Флаг отладки - установите False для отключения вывода
+# ============================================================
+DEBUG = True
+
+
+def debug_print(*args, **kwargs):
+    """Условный вывод отладочной информации."""
+    if DEBUG:
+        print(*args, **kwargs)
+
+
 class BalasBaBDPC(Algorithm):
     """
     Алгоритм ветвей и границ для задачи одного станка с отложенными ограничениями предшествования.
@@ -21,10 +33,12 @@ class BalasBaBDPC(Algorithm):
     def __init__(self,
                  jobs: List[Job],
                  precedence_constraints: Optional[Dict[Tuple[int, int], float]] = None,
-                 time_limit: float = 60.0):
+                 time_limit: float = 60.0,
+                 debug: bool = False):
         super().__init__(jobs, precedence_constraints)
         self.time_limit = time_limit
         self.start_time = 0
+        self.debug = debug or DEBUG  # можно переопределить через параметр
 
         self.best_schedule: Optional[List[int]] = None
         self.best_makespan: float = float('inf')
@@ -37,6 +51,11 @@ class BalasBaBDPC(Algorithm):
         self.pruned_by_test = 0
         self.best_sigma = None
         self.best_pi = None
+
+    def _debug_print(self, *args, **kwargs):
+        """Условный вывод отладочной информации."""
+        if self.debug:
+            print(*args, **kwargs)
 
     def _build_incoming_dpc(self, l_matrix=None) -> defaultdict:
         """Строит список входящих DPC на основе текущей l_matrix."""
@@ -54,6 +73,10 @@ class BalasBaBDPC(Algorithm):
         self.start_time = time.time()
         self.timed_out = False
 
+        # Получаем флаг отладки из kwargs, если передан
+        if 'debug' in kwargs:
+            self.debug = kwargs['debug']
+
         self.nodes_explored = 0
         self.strong_branches = 0
         self.weak_branches = 0
@@ -62,11 +85,12 @@ class BalasBaBDPC(Algorithm):
 
         jobs_list = list(self.jobs.values())
 
-        # Проверка на взаимные DPC
-        for i in self.jobs:
-            for j in self.jobs:
-                if self.l_matrix[i][j] > 0 and self.l_matrix[j][i] > 0:
-                    print(f"⚠️ WARNING: Mutual DPC between {i} and {j}")
+        # Проверка на взаимные DPC (только если DEBUG включен)
+        if self.debug:
+            for i in self.jobs:
+                for j in self.jobs:
+                    if self.l_matrix[i][j] > 0 and self.l_matrix[j][i] > 0:
+                        print(f"⚠️ WARNING: Mutual DPC between {i} and {j}")
 
         initial_data = {
             'r': {j.id: j.r_i for j in jobs_list},
@@ -90,7 +114,7 @@ class BalasBaBDPC(Algorithm):
         self.best_pi = {k: set(v) for k, v in initial_data['pi'].items()}
         initial_upper_bound = initial_makespan
 
-        print(f"Initial LTH makespan: {initial_makespan:.2f}")
+        self._debug_print(f"Initial LTH makespan: {initial_makespan:.2f}")
 
         # Запускаем B&B
         self._branch_and_bound(initial_data, initial_upper_bound, depth=0, history=set())
@@ -122,6 +146,7 @@ class BalasBaBDPC(Algorithm):
             self.best_schedule = schedule.copy()
             self.best_sigma = {k: set(v) for k, v in data['sigma'].items()}
             self.best_pi = {k: set(v) for k, v in data['pi'].items()}
+            self._debug_print(f"  -> New best makespan: {makespan:.2f}")
             return min(upper_bound, makespan)
         return upper_bound
 
@@ -431,21 +456,21 @@ class BalasBaBDPC(Algorithm):
 
         lb = self._calculate_lower_bound(data)
 
-        print(f"\n{'=' * 60}")
-        print(f"Depth {depth:2}: nodes={self.nodes_explored:5}, LB={lb:8.2f}, UB={upper_bound:8.2f}")
+        self._debug_print(f"\n{'=' * 60}")
+        self._debug_print(f"Depth {depth:2}: nodes={self.nodes_explored:5}, LB={lb:8.2f}, UB={upper_bound:8.2f}")
 
         if lb >= upper_bound - 1e-6:
-            print(f"  -> Pruned by bound")
+            self._debug_print(f"  -> Pruned by bound")
             self.pruned_by_bound += 1
             return
 
         schedule, makespan, start_times = self._longest_tail_heuristic(data, self.l_matrix)
-        print(f"  -> LTH makespan: {makespan:.2f}")
+        self._debug_print(f"  -> LTH makespan: {makespan:.2f}")
 
         upper_bound = self._update_best(schedule, makespan, data, upper_bound)
 
         if lb >= makespan - 1e-6:
-            print(f"  -> LB >= makespan, optimal for this branch")
+            self._debug_print(f"  -> LB >= makespan, optimal for this branch")
             return
 
         # Постпроцессинг
@@ -459,38 +484,38 @@ class BalasBaBDPC(Algorithm):
         critical_info = self._find_critical_path_via_graph(schedule, start_times, makespan, data, self.l_matrix)
         max_job_id = max(self.jobs.keys())
 
-        print(f"  -> critical_info: {critical_info is not None}")
-        if critical_info is not None:
-            print(f"  -> c={critical_info.get('c')}, J_size={len(critical_info.get('J', set()))}")
+        self._debug_print(f"  -> critical_info: {critical_info is not None}")
+        if critical_info is not None and self.debug:
+            self._debug_print(f"  -> c={critical_info.get('c')}, J_size={len(critical_info.get('J', set()))}")
 
         # Если нет критического пути или c фиктивный - возвращаем
         if critical_info is None:
-            print(f"  -> No critical path found, returning")
+            self._debug_print(f"  -> No critical path found, returning")
             return
 
         c = critical_info['c']
         J = critical_info['J']
 
         if c == 0 or c == max_job_id:
-            print(f"  -> c is dummy job, returning")
+            self._debug_print(f"  -> c is dummy job, returning")
             return
 
         if not J:
-            print(f"  -> J is empty, returning")
+            self._debug_print(f"  -> J is empty, returning")
             return
 
-        print(f"  -> final c={c}, J={sorted(J)[:5]}...")
+        self._debug_print(f"  -> final c={c}, J={sorted(J)[:5]}...")
 
         can_use_strong = self._check_strong_branching_conditions(
             critical_info, data, start_times, makespan, self.l_matrix
         )
-        print(f"  -> can_use_strong: {can_use_strong}")
+        self._debug_print(f"  -> can_use_strong: {can_use_strong}")
 
         if can_use_strong:
             self.strong_branches += 1
             self._apply_strong_branching(data, c, J, upper_bound, depth + 1, history)
         else:
-            print(f"  -> trying reverse problem...")
+            self._debug_print(f"  -> trying reverse problem...")
             rev_schedule, rev_makespan, rev_starts, rev_critical = self._solve_reverse_problem(
                 data, upper_bound, depth, history
             )
@@ -502,13 +527,13 @@ class BalasBaBDPC(Algorithm):
                     self.strong_branches += 1
                     rev_c = rev_critical['c']
                     rev_J = rev_critical['J']
-                    print(f"  -> reverse strong branching: c={rev_c}")
+                    self._debug_print(f"  -> reverse strong branching: c={rev_c}")
                     self._apply_strong_branching(data, rev_c, rev_J, upper_bound, depth + 1, history)
                     return
 
             # Weak branching
             self.weak_branches += 1
-            print(f"  -> weak branching")
+            self._debug_print(f"  -> weak branching")
             self._apply_weak_branching(data, critical_info, upper_bound, depth + 1, history)
 
     def _get_state_key(self, data: Dict) -> FrozenSet:
