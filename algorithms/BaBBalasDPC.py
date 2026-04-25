@@ -23,6 +23,8 @@ class BalasBaBDPC(Algorithm):
                  precedence_constraints: Optional[Dict[Tuple[int, int], float]] = None,
                  time_limit: float = 60.0):
         super().__init__(jobs, precedence_constraints)
+        self.init_jobs = jobs
+        self.init_precedence = precedence_constraints
         self.time_limit = time_limit
         self.start_time = 0
 
@@ -54,18 +56,7 @@ class BalasBaBDPC(Algorithm):
         self.pruned_by_bound = 0
         self.pruned_by_test = 0
 
-        jobs_list = list(self.jobs.values())
-
-        # Преобразуем precedence_constraints в формат, ожидаемый BestOfHeuristics
-        precedence_dict = None
-        if self.l_matrix:
-            precedence_dict = {}
-            for i in self.jobs:
-                for j in self.jobs:
-                    if self.l_matrix[i][j] > 0:
-                        precedence_dict[(i, j)] = self.l_matrix[i][j]
-
-        boh = BestOfHeuristics(jobs_list, precedence_dict)
+        boh = BestOfHeuristics(self.init_jobs, self.init_precedence)
         boh_schedule, init_makespan, boh_stats = boh.solve(**kwargs)
 
         # Устанавливаем начальные значения из эвристики
@@ -77,8 +68,8 @@ class BalasBaBDPC(Algorithm):
         # =============================================================================
 
         initial_data = {
-            'r': {j.id: j.r_i for j in jobs_list},
-            'q': {j.id: j.q_i for j in jobs_list},
+            'r': {j.id: j.r_i for j in self.init_jobs},
+            'q': {j.id: j.q_i for j in self.init_jobs},
             'sigma': defaultdict(set),
             'pi': defaultdict(set),
         }

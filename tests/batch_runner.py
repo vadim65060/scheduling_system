@@ -24,6 +24,7 @@ from algorithms.rte import RTE
 from algorithms.iltf import ILTF
 from algorithms.lth import LTH
 from algorithms.mlth import MLTH
+from algorithms.l_depth import LDepth
 from astg_jobs_loader import load_astg_jobs
 from core.graph_validator import validate_graph
 from core.job import Job
@@ -32,13 +33,14 @@ from stg_loader import load_stg
 BALAS_DPS_ALGO = BestOfHeuristics
 RTE_ALGO = BalasBaBDPC
 ALGORITHMS = {
-    # "BalasB&B DPC": BalasBaBDPC,
-    f"RTE({RTE_ALGO.__name__ if RTE_ALGO.__name__ != "BestOfHeuristics" else "BoH"})": RTE,
+    "BalasB&B DPC": BalasBaBDPC,
+    "LDepth": LDepth,
+    # f"RTE({RTE_ALGO.__name__ if RTE_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": RTE,
     "LTH": LTH,
-    "MLTH": MLTH,
-    "ILTF": ILTF,
-    "BoH": BestOfHeuristics,
-    f"BalasDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BoH"})": BalasDPC,
+    # "MLTH": MLTH,
+    # "ILTF": ILTF,
+    "BestH": BestOfHeuristics,
+    f"BalasHDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": BalasDPC,
 }
 
 
@@ -75,7 +77,7 @@ def load_any(path: str):
 # Запуск одного алгоритма
 # ----------------------------------------------------------------------
 
-def run_single(path: str, algo_name: str, timeout: float = 10) -> Dict:
+def run_single(path: str, algo_name: str, timeout: float = 30) -> Dict:
     jobs, precedence = load_any(path)
 
     # Проверка графа
@@ -93,7 +95,7 @@ def run_single(path: str, algo_name: str, timeout: float = 10) -> Dict:
 
     Algo = ALGORITHMS[algo_name]
     if Algo is BalasBaBDPC:
-        scheduler = Algo(jobs, precedence, time_limit=60)
+        scheduler = Algo(jobs, precedence, time_limit=timeout)
     elif Algo is BalasDPC:
         scheduler = Algo(jobs, precedence, heuristic_class=BestOfHeuristics)
     else:
@@ -177,7 +179,7 @@ def run_batch(folder: str,
 # ----------------------------------------------------------------------
 
 def final_comparison(results: List[Dict]):
-    print("\n================= ФИНАЛЬНОЕ СРАВНЕНИЕ АЛГОРИТМОВ =================")
+    print("\n================= СРАВНЕНИЕ АЛГОРИТМОВ =================")
 
     stats: Dict[str, Dict[str, float]] = {}
 
@@ -198,11 +200,11 @@ def final_comparison(results: List[Dict]):
         }
     best_algo = min(stats.items(), key=lambda x: x[1]["avg_C"])
 
-    print(f"{'Алгоритм':15} {'Тестов':7} {'  %':6} {'C_avg':8} {'C_min':8} {'C_max':8} {'t_avg (s)':10}")
+    print(f"{'Алгоритм':16} {'Тестов':7} {'  %':6} {'C_avg':8} {'C_min':8} {'C_max':8} {'t_avg (s)':10}")
     print("-" * 60)
 
     for algo, s in sorted(stats.items(), key=lambda x: x[1]["avg_C"]):
-        print(f"{algo:15} {s['tests']:7d} {s['avg_C']/best_algo[1]['avg_C']:6.2f} {s['avg_C']:8.2f} {s['min_C']:8.0f} "
+        print(f"{algo:16} {s['tests']:7d} {s['avg_C']/best_algo[1]['avg_C']:6.2f} {s['avg_C']:8.2f} {s['min_C']:8.0f} "
               f"{s['max_C']:8.0f} {s['avg_time']:10.3f}")
 
     print("\nЛучший алгоритм по среднему C_max:", best_algo[0])
@@ -323,7 +325,7 @@ def main():
         stats = final_comparison(results)
         print(f'{time.time()-start}s')
         csv_name = f"results_{os.path.basename(folder)}.csv"
-        # save_results_to_csv(results, csv_name)
+        save_results_to_csv(results, csv_name)
         plot_results(stats)
 
 

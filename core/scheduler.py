@@ -153,9 +153,9 @@ class Scheduler(ABC):
         ВАЖНО: Предполагается, что self.l_matrix уже содержит транзитивные DPC.
         """
         # Проверка на циклы
-        if self._has_cycle(sigma):
-            print("⚠️ WARNING: Cycle detected in precedence constraints")
-            return float('inf'), {}
+        # if self._has_cycle(sigma):
+        #     print("⚠️ WARNING: Cycle detected in precedence constraints")
+        #     return float('inf'), {}
 
         start_times: Dict[int, float] = {}
         current_time = 0.0
