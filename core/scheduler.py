@@ -37,7 +37,7 @@ class Scheduler(ABC):
                 self.l_matrix[i][j] = max(l_ij, job_i.d_i)
 
         # Вычисляем транзитивное замыкание DPC
-        self._compute_transitive_dpc()
+        # self._compute_transitive_dpc()
 
     def _compute_transitive_dpc(self):
         """
@@ -96,7 +96,8 @@ class Scheduler(ABC):
         # Добавляем DPC
         for i in self.jobs:
             for j in self.jobs:
-                if self.l_matrix[i][j] > 0:
+                # Используем .get() для безопасного доступа
+                if self.l_matrix.get(i, {}).get(j, 0) > 0:
                     graph[i].append(j)
 
         # Добавляем sigma

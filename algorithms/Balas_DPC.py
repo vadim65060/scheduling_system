@@ -189,7 +189,6 @@ class BalasDPC(Algorithm):
                     self.log(f"Ошибка эвристики: {e}")
             if init_schedule:
                 # Пересчёт makespan через базовый DPC-механизм
-                init_makespan, _ = self.calculate_makespan(init_schedule)
                 self.best_makespan = init_makespan
                 self.best_schedule = init_schedule.copy()
                 self.log(f"Начальная верхняя граница: {self.best_makespan}")

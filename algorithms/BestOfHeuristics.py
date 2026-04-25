@@ -12,14 +12,14 @@ class BestOfHeuristics(Algorithm):
     и выбирает лучшее расписание по C_max.
     """
 
-    def __init__(self, jobs, precedence):
-        super().__init__(jobs, precedence)
+    def __init__(self, jobs, precedence_constraints):
+        super().__init__(jobs, precedence_constraints)
 
         # Инициализируем три алгоритма на тех же данных
         self.algorithms = {
-            "LTH": LTH(jobs, precedence),
-            "MLTH": MLTH(jobs, precedence),
-            "ILTF": ILTF(jobs, precedence),
+            "LTH": LTH(jobs, precedence_constraints),
+            "MLTH": MLTH(jobs, precedence_constraints),
+            "ILTF": ILTF(jobs, precedence_constraints),
         }
 
     def solve(self, **kwargs) -> Tuple[List[int], float, Dict]:

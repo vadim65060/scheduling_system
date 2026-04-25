@@ -7,6 +7,7 @@
  - Выбор количества тестов
 """
 import csv
+import datetime
 import multiprocessing as mp
 import os
 import time
@@ -18,6 +19,7 @@ from tqdm import tqdm
 from algorithms.BaBBalasDPC import BalasBaBDPC
 from algorithms.Balas_DPC import BalasDPC
 from algorithms.BestOfHeuristics import BestOfHeuristics
+from algorithms.rte import RTE
 
 from algorithms.iltf import ILTF
 from algorithms.lth import LTH
@@ -28,13 +30,15 @@ from core.job import Job
 from stg_loader import load_stg
 
 BALAS_DPS_ALGO = BestOfHeuristics
+RTE_ALGO = BalasBaBDPC
 ALGORITHMS = {
-    "BalasB&B DPC": BalasBaBDPC,
+    # "BalasB&B DPC": BalasBaBDPC,
+    f"RTE({RTE_ALGO.__name__ if RTE_ALGO.__name__ != "BestOfHeuristics" else "BoH"})": RTE,
     "LTH": LTH,
     "MLTH": MLTH,
     "ILTF": ILTF,
     "BoH": BestOfHeuristics,
-    # f"BalasDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BoH"})": BalasDPC,
+    f"BalasDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BoH"})": BalasDPC,
 }
 
 
@@ -89,7 +93,9 @@ def run_single(path: str, algo_name: str, timeout: float = 10) -> Dict:
 
     Algo = ALGORITHMS[algo_name]
     if Algo is BalasBaBDPC:
-        scheduler = Algo(jobs, precedence, time_limit=20)
+        scheduler = Algo(jobs, precedence, time_limit=60)
+    elif Algo is BalasDPC:
+        scheduler = Algo(jobs, precedence, heuristic_class=BestOfHeuristics)
     else:
         scheduler = Algo(jobs, precedence)
 
@@ -152,7 +158,6 @@ def run_batch(folder: str,
             tasks.append((path, algo, timeout))
 
     print(f"Запуск {len(tasks)} задач в {min(mp.cpu_count(), len(tasks))} потоках...\n")
-
     results = run_parallel(tasks)
 
     # Если запускаем один алгоритм — выводим результаты каждого теста
@@ -191,16 +196,16 @@ def final_comparison(results: List[Dict]):
             "max_C": max(C_vals),
             "avg_time": sum(T_vals) / len(T_vals),
         }
+    best_algo = min(stats.items(), key=lambda x: x[1]["avg_C"])
 
-    print(f"{'Алгоритм':15} {'Тестов':7} {'C_avg':8} {'C_min':8} {'C_max':8} {'t_avg (s)':10}")
+    print(f"{'Алгоритм':15} {'Тестов':7} {'  %':6} {'C_avg':8} {'C_min':8} {'C_max':8} {'t_avg (s)':10}")
     print("-" * 60)
 
     for algo, s in sorted(stats.items(), key=lambda x: x[1]["avg_C"]):
-        print(f"{algo:12} {s['tests']:7d} {s['avg_C']:8.2f} {s['min_C']:8.2f} "
-              f"{s['max_C']:8.2f} {s['avg_time']:10.3f}")
+        print(f"{algo:15} {s['tests']:7d} {s['avg_C']/best_algo[1]['avg_C']:6.2f} {s['avg_C']:8.2f} {s['min_C']:8.0f} "
+              f"{s['max_C']:8.0f} {s['avg_time']:10.3f}")
 
-    best_algo = min(stats.items(), key=lambda x: x[1]["avg_C"])[0]
-    print("\nЛучший алгоритм по среднему C_max:", best_algo)
+    print("\nЛучший алгоритм по среднему C_max:", best_algo[0])
 
     return stats
 
@@ -300,9 +305,11 @@ def main():
         algo = list(ALGORITHMS.keys())[idx]
 
         print(f"\nЗапуск алгоритма {algo}...\n")
-
+        print(datetime.datetime.now())
+        start = time.time()
         results = run_batch(folder, [algo], limit, verbose=True)
         stats = final_comparison(results)
+        print(f'{time.time() - start}s')
         check_time(results)
         csv_name = f"results_{os.path.basename(folder)}.csv"
         # save_results_to_csv(results, csv_name)
@@ -310,8 +317,13 @@ def main():
 
     else:
         print("\nЗапуск всех алгоритмов...\n")
+        print(datetime.datetime.now())
+        start = time.time()
         results = run_batch(folder, list(ALGORITHMS.keys()), limit)
         stats = final_comparison(results)
+        print(f'{time.time()-start}s')
+        csv_name = f"results_{os.path.basename(folder)}.csv"
+        # save_results_to_csv(results, csv_name)
         plot_results(stats)
 
 
