@@ -34,10 +34,10 @@ BALAS_DPS_ALGO = BestOfHeuristics
 RTE_ALGO = BalasBaBDPC
 ALGORITHMS = {
     "BalasB&B DPC": BalasBaBDPC,
-    "LDepth": LDepth,
-    # f"RTE({RTE_ALGO.__name__ if RTE_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": RTE,
+    # "LDepth": LDepth,
+    f"RTE({RTE_ALGO.__name__ if RTE_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": RTE,
     "LTH": LTH,
-    # "MLTH": MLTH,
+    "MLTH": MLTH,
     # "ILTF": ILTF,
     "BestH": BestOfHeuristics,
     f"BalasHDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": BalasDPC,
@@ -97,7 +97,9 @@ def run_single(path: str, algo_name: str, timeout: float = 30) -> Dict:
     if Algo is BalasBaBDPC:
         scheduler = Algo(jobs, precedence, time_limit=timeout)
     elif Algo is BalasDPC:
-        scheduler = Algo(jobs, precedence, heuristic_class=BestOfHeuristics)
+        scheduler = Algo(jobs, precedence, heuristic_class=BALAS_DPS_ALGO)
+    elif Algo is RTE:
+        scheduler = Algo(jobs, precedence, heuristic_class=RTE_ALGO)
     else:
         scheduler = Algo(jobs, precedence)
 

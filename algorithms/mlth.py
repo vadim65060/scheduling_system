@@ -214,7 +214,7 @@ class MLTH(LTH):
         start_times: Dict[int, float],
         r_prime: Dict[int, float],
     ) -> Tuple[List[int], float]:
-        max_iter = self.n * 5
+        max_iter = self.n ** 2
         it = 0
 
         # гарантируем, что C определен
