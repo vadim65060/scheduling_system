@@ -64,6 +64,6 @@ def process_folder(stg_folder: str, out_folder: str, lmax: int = 50):
 
 
 if __name__ == "__main__":
-    process_folder("data/100", "data/100_aug_l25", 25)
     process_folder("data/100", "data/100_aug_l50", 50)
+    process_folder("data/100", "data/100_aug_l75", 75)
     process_folder("data/100", "data/100_aug_l100", 100)

@@ -17,7 +17,6 @@ from algorithms.mlth import MLTH
 from algorithms.iltf import ILTF
 from algorithms.Balas_DPC import BalasDPC
 from algorithms.exact_bf import ExactBruteForce
-from algorithms.exact_bb import ExactBranchAndBound
 from evaluation.comparator import AlgorithmComparator
 
 
@@ -114,7 +113,6 @@ class TestScheduler(unittest.TestCase):
 
         self.assertEqual(start_times[1], 5)
         self.assertAlmostEqual(C_max, 5 + 3 + 2)
-
 
 
 class TestLTH(unittest.TestCase):
@@ -310,7 +308,6 @@ class TestBalasDPC(unittest.TestCase):
         self.assertTrue(stats['optimal'])
 
 
-
 class TestExactBruteForce(unittest.TestCase):
 
     def test_bruteforce_optimality(self):
@@ -329,60 +326,6 @@ class TestExactBruteForce(unittest.TestCase):
 
         # C_max = 3 + 1 = 4
         self.assertAlmostEqual(C_max, 4.0)
-
-
-class TestExactBranchAndBound(unittest.TestCase):
-    """Тесты для алгоритма ветвей и границ"""
-
-    def setUp(self):
-        self.small_jobs = [
-            Job(id=1, r_i=0, d_i=2, q_i=3),
-            Job(id=2, r_i=1, d_i=2, q_i=2),
-            Job(id=3, r_i=2, d_i=1, q_i=4)
-        ]
-        self.bb = ExactBranchAndBound(self.small_jobs)
-
-    def test_branch_and_bound_solves(self):
-        schedule, C_max, stats = self.bb.solve(timeout=10.0)
-
-        self.assertIsNotNone(schedule)
-        self.assertEqual(len(schedule), 3)
-        self.assertGreater(C_max, 0)
-        self.assertIn('nodes_explored', stats)
-        self.assertIn('pruned_by_bound', stats)
-
-    def test_branch_and_bound_with_precedence(self):
-        precedence = {(1, 2): 3}
-        bb = ExactBranchAndBound(self.small_jobs, precedence)
-        schedule, C_max, stats = bb.solve(timeout=10.0)
-
-        self.assertIsNotNone(schedule)
-        if 1 in schedule and 2 in schedule:
-            self.assertLess(schedule.index(1), schedule.index(2))
-
-    def test_branch_and_bound_optimality(self):
-        """Задача, где оптимальное решение очевидно"""
-        jobs = [
-            Job(id=1, r_i=0, d_i=1, q_i=1),
-            Job(id=2, r_i=10, d_i=1, q_i=10)  # late release, large tail
-        ]
-        bb = ExactBranchAndBound(jobs)
-        schedule, C_max, stats = bb.solve(timeout=10.0)
-
-        # Job 2 should be scheduled first despite late release
-        self.assertEqual(schedule[0], 2)
-
-    def test_branch_and_bound_can_add_job(self):
-        """Проверяем метод _can_add_job"""
-        jobs = [
-            Job(id=1, r_i=0, d_i=1, q_i=1),
-            Job(id=2, r_i=0, d_i=1, q_i=1)
-        ]
-        precedence = {(1, 2): 1}
-        bb = ExactBranchAndBound(jobs, precedence)
-
-        self.assertTrue(bb._can_add_job(1, []))
-        self.assertFalse(bb._can_add_job(2, []))  # pred 1 not scheduled
 
 
 class TestAlgorithmComparator(unittest.TestCase):
@@ -457,7 +400,6 @@ class TestIntegration(unittest.TestCase):
             ("ILTF", ILTF),
             ("BalasDPC", BalasDPC),
             ("ExactBruteForce", ExactBruteForce),
-            ("ExactBranchAndBound", ExactBranchAndBound)
         ]
 
         for name, algo_class in algorithms:
@@ -533,7 +475,6 @@ class TestIntegration(unittest.TestCase):
             "MLTH": MLTH,
             "ILTF": ILTF,
             "BalasDPC": BalasDPC,
-            "ExactBranchAndBound": ExactBranchAndBound
         }
 
         for name, algo_class in algorithms.items():
@@ -605,7 +546,7 @@ class TestEdgeCases(unittest.TestCase):
         """Проверка на пустой список заданий"""
         jobs = []
 
-        algorithms = [LTH, MLTH, ILTF, BalasDPC, ExactBruteForce, ExactBranchAndBound]
+        algorithms = [LTH, MLTH, ILTF, BalasDPC, ExactBruteForce]
 
         for algo_class in algorithms:
             if algo_class == BalasDPC:
@@ -623,7 +564,7 @@ class TestEdgeCases(unittest.TestCase):
         job = Job(id=1, r_i=5, d_i=10, q_i=3)
         jobs = [job]
 
-        algorithms = [LTH, MLTH, ILTF, BalasDPC, ExactBruteForce, ExactBranchAndBound]
+        algorithms = [LTH, MLTH, ILTF, BalasDPC, ExactBruteForce]
 
         for algo_class in algorithms:
             if algo_class == BalasDPC:

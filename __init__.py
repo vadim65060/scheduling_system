@@ -8,7 +8,6 @@ from .core.utils import Visualizer, Timer, ProgressBar
 from .algorithms.lth import LTH
 from .algorithms.mlth import MLTH
 from .algorithms.exact_bf import ExactBruteForce
-from .algorithms.exact_bb import ExactBranchAndBound
 from .algorithms.iltf import ILTF
 from .algorithms.Balas_DPC import BalasDPC
 from .evaluation.comparator import AlgorithmComparator
@@ -26,6 +25,5 @@ __all__ = [
     'BalasDPC',
     'ILTF',
     'ExactBruteForce',
-    'ExactBranchAndBound',
     'AlgorithmComparator'
 ]

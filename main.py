@@ -9,7 +9,6 @@ from typing import List, Dict, Optional, Tuple
 
 from algorithms.BaBBalasDPC import BalasBaBDPC
 from core.Algorithm import Algorithm
-from algorithms.exact_bb import ExactBranchAndBound
 from algorithms.exact_bf import ExactBruteForce
 from algorithms.lth import LTH
 from algorithms.mlth import MLTH
@@ -153,8 +152,6 @@ def _select_algorithm(jobs: List[Job],
         return ILTF(jobs, precedence)
     elif choice == "5":
         return ExactBruteForce(jobs)
-    elif choice == "6":
-        return ExactBranchAndBound(jobs)
     else:
         Visualizer.print_warning("Неверный выбор, используется MLTH")
         return MLTH(jobs, precedence)
@@ -179,9 +176,6 @@ def run_comparison() -> Dict[str, Dict]:
     # Точные алгоритмы — только для небольших задач без ограничений
     if constraints is None and len(jobs) <= 8:
         comparator.register_algorithm("ExactBruteForce", ExactBruteForce, timeout=10.0)
-
-    if constraints is None and len(jobs) <= 12:
-        comparator.register_algorithm("ExactBranchAndBound", ExactBranchAndBound, timeout=30.0)
 
     results = comparator.compare(jobs, constraints)
 
