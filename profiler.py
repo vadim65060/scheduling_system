@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import Dict, Tuple, Optional, List, Any
 
 from algorithms.BaBBalasDPC import BalasBaBDPC
+from algorithms.l_depth import LDepth
+from algorithms.rte import RTE
 from core.job import Job
 from core.validator import validate_schedule
 from tests.astg_jobs_loader import load_astg_jobs
@@ -23,10 +25,10 @@ class TestConfig:
     TEST_FILE = "tests/data/100_aug_l100/rand0157.astg"
 
     # Лимит времени для алгоритма (секунды)
-    TIME_LIMIT = 300
+    TIME_LIMIT = 30
 
     # Сохранять ли профилирование
-    SAVE_PROFILE = False
+    SAVE_PROFILE = True
 
     # Выводить ли подробную информацию
     VERBOSE = False
@@ -79,7 +81,7 @@ def run_algorithm(jobs_list: List[Job],
     print(f"\n🚀 Запуск алгоритма BalasBaBDPC...")
     print(f"   ⏱️  Лимит времени: {time_limit} сек")
 
-    algo = BalasBaBDPC(jobs_list, precedence, time_limit=time_limit)
+    algo = RTE(jobs_list, precedence, heuristic_class=BalasBaBDPC)
 
     profiler = None
     profile_stats = None
@@ -135,7 +137,9 @@ def print_results_summary(C_max_algo: float,
                           schedule: List[int],
                           sigma: Optional[Dict[int, set]] = None) -> None:
     """Выводит сводку результатов."""
-
+    for (stat_name, value) in stats.items():
+        print(f"{stat_name}: {value}")
+    # print(stats)
     print(f"\n{'=' * 70}")
     print(f"📊 РЕЗУЛЬТАТЫ АЛГОРИТМА")
     print(f"{'=' * 70}")
@@ -227,7 +231,7 @@ def print_profile_stats(profile_stats: pstats.Stats, top_n: int = 20) -> None:
 
     stream = io.StringIO()
     profile_stats.sort_stats('cumulative')
-    profile_stats.print_stats(top_n, stream=stream)
+    profile_stats.print_stats(top_n)
 
     # Выводим только самые важные строки
     lines = stream.getvalue().split('\n')
@@ -295,7 +299,7 @@ def main() -> Tuple[Optional[List[int]], float, Dict[str, Any]]:
         print_profile_stats(profile_stats)
         # Сохраняем профиль
         profile_file = TestConfig.OUTPUT_DIR / f"profile_{datetime.now().strftime('%Y%m%d_%H%M%S')}.stats"
-        profile_stats.dump_stats(str(profile_file))
+        # profile_stats.dump_stats(str(profile_file))
         print(f"\n💾 Профиль сохранен в: {profile_file}")
 
     return schedule, C_max_algo, stats
