@@ -19,7 +19,7 @@ from algorithms.mlth import MLTH
 from algorithms.rte import RTE
 from core.job import Job
 from core.validator import validate_schedule
-from tests.astg_jobs_loader import load_astg_jobs
+from tests.jobs_loader import load_astg_jobs
 
 
 class TestConfig:

@@ -1,6 +1,6 @@
 import os
 import random
-from stg_loader import load_stg
+from jobs_loader import load_stg
 
 
 def augment_from_stg(stg_path: str, lmax: int):

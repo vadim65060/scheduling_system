@@ -25,10 +25,9 @@ from algorithms.iltf import ILTF
 from algorithms.lth import LTH
 from algorithms.mlth import MLTH
 from algorithms.l_depth import LDepth
-from astg_jobs_loader import load_astg_jobs
 from core.graph_validator import validate_graph
 from core.job import Job
-from stg_loader import load_stg
+from tests.jobs_loader import load_any
 
 BALAS_DPS_ALGO = BestOfHeuristics
 RTE_ALGO = BalasBaBDPC
@@ -42,36 +41,6 @@ ALGORITHMS = {
     "BestH": BestOfHeuristics,
     # f"BalasHDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": BalasDPC,
 }
-
-
-# ----------------------------------------------------------------------
-# Универсальный загрузчик тестов
-# ----------------------------------------------------------------------
-
-def load_any(path: str):
-    """
-    Определяет формат файла:
-      *.stg → load_stg
-      *.astg → load_augmented
-    Возвращает:
-      jobs: List[Job]
-      precedence: Dict[(i,j), L(i,j)]
-    """
-
-    if path.endswith(".astg"):
-        raw_jobs, raw_edges = load_astg_jobs(path)
-
-        jobs = []
-        for job_id, (t, r, q) in raw_jobs.items():
-            jobs.append(Job(id=job_id, d_i=t, r_i=r, q_i=q))
-
-        precedence = {(i, j): lij for (i, j), lij in raw_edges.items()}
-        return jobs, precedence
-
-    else:
-        # стандартный STG
-        return load_stg(path)
-
 
 # ----------------------------------------------------------------------
 # Запуск одного алгоритма
