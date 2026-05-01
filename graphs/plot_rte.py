@@ -1,12 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Данные из таблиц (значения % для каждого алгоритма по 4 наборам)
-# Набор 1: изображение 1 (L1)
-# Набор 2: изображение 2 (L2)
-# Набор 3: изображение 3 (L3)
-# Набор 4: изображение 4 (L4)
-
 data = {
     'RTE(BalasB&BDPC)': [1.02, 1.03, 1.05, 1.07],
     'BestH': [1.08, 1.07, 1.05, 1.04],
@@ -37,4 +31,5 @@ for i in range(len(L)):
 
 plt.legend()
 plt.tight_layout()
+plt.savefig('img/rte_comparison.png', dpi=800, bbox_inches='tight')
 plt.show()

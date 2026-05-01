@@ -38,9 +38,9 @@ ALGORITHMS = {
     f"RTE({RTE_ALGO.__name__ if RTE_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": RTE,
     "LTH": LTH,
     "MLTH": MLTH,
-    # "ILTF": ILTF,
+    "ILTF": ILTF,
     "BestH": BestOfHeuristics,
-    f"BalasHDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": BalasDPC,
+    # f"BalasHDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": BalasDPC,
 }
 
 
@@ -326,7 +326,7 @@ def main():
         results = run_batch(folder, list(ALGORITHMS.keys()), limit)
         stats = final_comparison(results)
         print(f'{time.time()-start}s')
-        csv_name = f"results_{os.path.basename(folder)}.csv"
+        csv_name = f"results/results_{os.path.basename(folder)}.csv"
         save_results_to_csv(results, csv_name)
         plot_results(stats)
 

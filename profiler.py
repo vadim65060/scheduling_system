@@ -11,7 +11,11 @@ from datetime import datetime
 from typing import Dict, Tuple, Optional, List, Any
 
 from algorithms.BaBBalasDPC import BalasBaBDPC
+from algorithms.BestOfHeuristics import BestOfHeuristics
+from algorithms.iltf import ILTF
 from algorithms.l_depth import LDepth
+from algorithms.lth import LTH
+from algorithms.mlth import MLTH
 from algorithms.rte import RTE
 from core.job import Job
 from core.validator import validate_schedule
@@ -81,7 +85,7 @@ def run_algorithm(jobs_list: List[Job],
     print(f"\n🚀 Запуск алгоритма BalasBaBDPC...")
     print(f"   ⏱️  Лимит времени: {time_limit} сек")
 
-    algo = RTE(jobs_list, precedence, heuristic_class=BalasBaBDPC)
+    algo = RTE(jobs_list, precedence, heuristic_class=ILTF)
 
     profiler = None
     profile_stats = None
@@ -91,6 +95,8 @@ def run_algorithm(jobs_list: List[Job],
         profiler.enable()
 
     schedule, C_max, stats = algo.solve()
+    if len(jobs_list)<=20:
+        algo.visualize(schedule, C_max, stats)
 
     if profile and profiler:
         profiler.disable()
@@ -160,7 +166,7 @@ def print_results_summary(C_max_algo: float,
 
     # Информация о решении
     print(f"\n🎯 Решение:")
-    print(f"   • Initial makespan: {stats.get('initial_makespan', 'N/A'):.2f}")
+    # print(f"   • Initial makespan: {stats.get('initial_makespan', 'N/A'):.2f}")
     print(f"   • Improvement:      {stats.get('improvement', 0):.2f}")
     print(f"   • Timed out:        {stats.get('timed_out', False)}")
     print(f"   • Optimal:          {stats.get('optimal', False)}")
