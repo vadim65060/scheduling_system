@@ -1,3 +1,4 @@
+import copy
 from typing import List, Dict, Tuple, Optional, Type, Any
 
 from core.Algorithm import Algorithm
@@ -41,7 +42,7 @@ class RTE(Algorithm):
         self.heuristic_kwargs = heuristic_kwargs or {}
         self.name = f"RTE ({self.heuristic_class.__name__})"
 
-        self.precedence_constraints_noDPC = precedence_constraints.copy()
+        self.precedence_constraints_noDPC = copy.deepcopy(precedence_constraints)
 
         for (i, j), l_ij in precedence_constraints.items():
             self.precedence_constraints_noDPC[(i, j)] = self.jobs[i].d_i

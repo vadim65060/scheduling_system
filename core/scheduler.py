@@ -23,21 +23,70 @@ class Scheduler(ABC):
             jobs: Список заданий
             precedence_constraints: Ограничения предшествования
         """
-        self.jobs = {job.id: job for job in jobs}
+        self.jobs: dict[int, Job] = {job.id: job for job in jobs}
         self.n = len(jobs)
         self.name = self.__class__.__name__
 
         # Матрица задержек предшествования
         self.l_matrix = defaultdict(lambda: defaultdict(float))
 
+        # Множество всех DPC-дуг, включая с l_ij = 0
+        # Это принципиально важно: l_ij = 0 допустимо, когда d_i = 0
+        self.dpc_pairs: Set[Tuple[int, int]] = set()
+
         if precedence_constraints:
+            self.dpc_pairs = set(precedence_constraints.keys())
             for (i, j), l_ij in precedence_constraints.items():
-                # Убеждаемся, что l_ij ≥ d_i
+                # Убеждаемся, что l_ij >= d_i
                 job_i = self.jobs[i]
                 self.l_matrix[i][j] = max(l_ij, job_i.d_i)
 
-        # Вычисляем транзитивное замыкание DPC
-        # self._compute_transitive_dpc()
+    def _is_dpc_arc(self, i: int, j: int) -> bool:
+        """
+        Проверяет, существует ли DPC-дуга от i к j.
+        Учитывает как дуги из l_matrix (l_ij > 0), так и дуги с l_ij = 0.
+        """
+        return (i, j) in self.dpc_pairs or self.l_matrix[i][j] > 0
+
+    def _get_predecessors(self) -> Dict[int, set]:
+        """
+        Возвращает словарь предшественников: pred[j] = {i: i -> j}
+        Учитывает все DPC, включая дуги с l_ij = 0.
+        """
+        pred = defaultdict(set)
+
+        # Добавляем все DPC из dpc_pairs (включая l_ij = 0)
+        for (i, j) in self.dpc_pairs:
+            if i in self.jobs and j in self.jobs:
+                pred[j].add(i)
+
+        # Добавляем DPC из l_matrix (l_ij > 0)
+        for i in self.jobs:
+            for j in self.jobs:
+                if self.l_matrix[i][j] > 0 and (i, j) not in self.dpc_pairs:
+                    pred[j].add(i)
+
+        return pred
+
+    def _get_successors(self) -> Dict[int, set]:
+        """
+        Возвращает словарь последователей: succ[i] = {j: i -> j}
+        Учитывает все DPC, включая дуги с l_ij = 0.
+        """
+        succ = defaultdict(set)
+
+        # Добавляем все DPC из dpc_pairs (включая l_ij = 0)
+        for (i, j) in self.dpc_pairs:
+            if i in self.jobs and j in self.jobs:
+                succ[i].add(j)
+
+        # Добавляем DPC из l_matrix (l_ij > 0)
+        for i in self.jobs:
+            for j in self.jobs:
+                if self.l_matrix[i][j] > 0 and (i, j) not in self.dpc_pairs:
+                    succ[i].add(j)
+
+        return succ
 
     def _compute_transitive_dpc(self):
         """
@@ -56,10 +105,15 @@ class Scheduler(ABC):
         for i in range(n):
             dist[i][i] = 0
 
-        # Заполняем прямые DPC
+        # Заполняем прямые DPC (все дуги из dpc_pairs)
+        for (i, j) in self.dpc_pairs:
+            if i in idx and j in idx:
+                dist[idx[i]][idx[j]] = max(dist[idx[i]][idx[j]], self.l_matrix[i][j])
+
+        # Также учитываем дуги только из l_matrix
         for i in job_ids:
             for j in job_ids:
-                if self.l_matrix[i][j] > 0:
+                if self.l_matrix[i][j] > 0 and (i, j) not in self.dpc_pairs:
                     dist[idx[i]][idx[j]] = max(dist[idx[i]][idx[j]], self.l_matrix[i][j])
 
         # Алгоритм Флойда-Уоршелла для максимальных путей
@@ -69,16 +123,18 @@ class Scheduler(ABC):
                     if dist[i][k] > -float('inf') and dist[k][j] > -float('inf'):
                         dist[i][j] = max(dist[i][j], dist[i][k] + dist[k][j])
 
-        # Обновляем l_matrix с учетом транзитивности
+        # Обновляем l_matrix и dpc_pairs с учетом транзитивности
         for i in job_ids:
             for j in job_ids:
                 if dist[idx[i]][idx[j]] > 0:
-                    self.l_matrix[i][j] = max(self.l_matrix[i][j], dist[idx[i]][idx[j]])
+                    new_lij = max(self.l_matrix[i][j], dist[idx[i]][idx[j]])
+                    self.l_matrix[i][j] = new_lij
+                    self.dpc_pairs.add((i, j))
 
         # Проверка на циклы с положительной длиной
         for i in job_ids:
             if self.l_matrix[i][i] > 0:
-                print(f"⚠️ WARNING: Cycle detected with positive length {self.l_matrix[i][i]}")
+                print(f"WARNING: Cycle detected with positive length {self.l_matrix[i][i]}")
 
     def _has_cycle(self, sigma: Optional[Dict[int, Set[int]]] = None) -> bool:
         """
@@ -94,11 +150,8 @@ class Scheduler(ABC):
         graph = defaultdict(list)
 
         # Добавляем DPC
-        for i in self.jobs:
-            for j in self.jobs:
-                # Используем .get() для безопасного доступа
-                if self.l_matrix.get(i, {}).get(j, 0) > 0:
-                    graph[i].append(j)
+        for (i, j) in self.dpc_pairs:
+            graph[i].append(j)
 
         # Добавляем sigma
         if sigma:
@@ -149,14 +202,7 @@ class Scheduler(ABC):
           - работы выполняются последовательно в порядке `schedule`;
           - учтены r_i и L(i,j) из self.l_matrix;
           - если передана sigma, учитываются добавленные отношения предшествования.
-
-        ВАЖНО: Предполагается, что self.l_matrix уже содержит транзитивные DPC.
         """
-        # Проверка на циклы
-        # if self._has_cycle(sigma):
-        #     print("⚠️ WARNING: Cycle detected in precedence constraints")
-        #     return float('inf'), {}
-
         start_times: Dict[int, float] = {}
         current_time = 0.0
 
@@ -196,7 +242,8 @@ class Scheduler(ABC):
         return C_max, start_times
 
     def calculate_makespan_with_transitive(self, schedule: List[int],
-                                          sigma: Optional[Dict[int, Set[int]]] = None) -> Tuple[float, Dict[int, float]]:
+                                           sigma: Optional[Dict[int, Set[int]]] = None) -> Tuple[
+        float, Dict[int, float]]:
         """
         Версия calculate_makespan, которая сначала вычисляет транзитивное замыкание.
         Используйте этот метод, если не уверены, что l_matrix транзитивна.
@@ -289,7 +336,7 @@ class Scheduler(ABC):
         Visualizer.print_info("Алгоритм", self.name)
         Visualizer.print_info("C_max", f"{C_max:.2f}")
         Visualizer.print_info("Количество заданий", self.n)
-        Visualizer.print_info("Расписание", " → ".join(map(str, schedule)))
+        Visualizer.print_info("Расписание", " -> ".join(map(str, schedule)))
 
         # Гант-диаграма
         print()

@@ -27,19 +27,20 @@ from algorithms.mlth import MLTH
 from algorithms.l_depth import LDepth
 from core.graph_validator import validate_graph
 from core.job import Job
+from core.validator import validate_schedule
 from tests.jobs_loader import load_any
 
 BALAS_DPS_ALGO = BestOfHeuristics
-RTE_ALGO = BalasBaBDPC
+RTE_ALGO = BestOfHeuristics
 ALGORITHMS = {
     "BalasB&B DPC": BalasBaBDPC,
     # "LDepth": LDepth,
-    f"RTE({RTE_ALGO.__name__ if RTE_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": RTE,
     "LTH": LTH,
+    f'RTE({RTE_ALGO.__name__ if RTE_ALGO.__name__ != "BestOfHeuristics" else "BestH"})': RTE,
     "MLTH": MLTH,
     "ILTF": ILTF,
     "BestH": BestOfHeuristics,
-    # f"BalasHDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BestH"})": BalasDPC,
+    # f'BalasHDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BestH"})': BalasDPC,
 }
 
 # ----------------------------------------------------------------------
@@ -75,6 +76,20 @@ def run_single(path: str, algo_name: str, timeout: float = 30) -> Dict:
     start = time.time()
     schedule, C_max, stats = scheduler.solve(timeout=timeout)
     elapsed = time.time() - start
+    jobs_dict = {job.id: job for job in jobs}
+    is_valid, result = validate_schedule(
+        schedule,
+        jobs_dict,
+        precedence,
+        verbose=False
+    )
+    if not is_valid:
+        print({"file": os.path.basename(path),
+            "algorithm": algo_name,
+            "C_max": float("inf"),
+            "time": 0,
+            "error": result,
+            "schedule": schedule,})
 
     return {
         "file": os.path.basename(path),

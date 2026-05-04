@@ -16,10 +16,11 @@ class BestOfHeuristics(Algorithm):
         super().__init__(jobs, precedence_constraints)
 
         # Инициализируем три алгоритма на тех же данных
+        import copy
         self.algorithms = {
-            "LTH": LTH(jobs, precedence_constraints),
-            "MLTH": MLTH(jobs, precedence_constraints),
-            "ILTF": ILTF(jobs, precedence_constraints),
+            "LTH": LTH(copy.deepcopy(jobs), copy.deepcopy(precedence_constraints)),
+            "MLTH": MLTH(copy.deepcopy(jobs), copy.deepcopy(precedence_constraints)),
+            "ILTF": ILTF(copy.deepcopy(jobs), copy.deepcopy(precedence_constraints)),
         }
 
     def solve(self, **kwargs) -> Tuple[List[int], float, Dict]:
@@ -39,6 +40,7 @@ class BestOfHeuristics(Algorithm):
 
         # Добавляем информацию о том, какой алгоритм победил
         best_stats = dict(best_stats)
+        best_stats["algorithm"] = "BestH"
         best_stats["best_algorithm"] = best_name
 
         return best_schedule, best_C, best_stats

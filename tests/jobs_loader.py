@@ -122,29 +122,27 @@ def load_any(
         (jobs, precedence)  –  список Job и словарь DPC
     """
     if seed is not None:
-        random.seed(seed)
+        pass
+        # random.seed(seed)
 
     # --- Загрузка исходных данных ---
     if path.endswith(".astg"):
         raw_jobs, raw_edges = load_astg_jobs(path)
         jobs = [Job(id=job_id, d_i=t, r_i=r, q_i=q) for job_id, (t, r, q) in raw_jobs.items()]
-        precedence = {(i, j): float(lij) for (i, j), lij in raw_edges.items()}
+        precedence = {(i, j): int(lij) for (i, j), lij in raw_edges.items()}
     elif path.endswith(".stg"):
         jobs, precedence = load_stg(path)
     else:
         raise ValueError(f"Неподдерживаемый формат файла: {path}")
-
-    if not jobs:
-        return jobs, precedence
 
     # --- Усложнение (если требуется) ---
     if not hard:
         return jobs, precedence
 
     # Строим быстрое расписание с помощью LTH
-    from algorithms.lth import LTH
-    lth = LTH(copy.deepcopy(jobs), copy.deepcopy(precedence))
-    schedule, _, _ = lth.solve()
+    from algorithms.iltf import ILTF
+    algo = ILTF(copy.deepcopy(jobs), copy.deepcopy(precedence))
+    schedule, _, _ = algo.solve()
 
     if not schedule or len(schedule) < 2:
         return jobs, precedence
@@ -153,32 +151,25 @@ def load_any(
     n = len(schedule)
     end_idx = max(1, int(n * hard_ratio))
     candidates = schedule[:end_idx]
+    #
+    # if not candidates:
+    #     return jobs, precedence
 
-    # Исключаем фиктивные работы 0 и max_id, если они есть
-    max_id = max(j.id for j in jobs)
-    candidates = [j for j in candidates if j not in (0, max_id)]
+    target_job_id = candidates[-1]
 
-    if not candidates:
-        return jobs, precedence
-
-    target_job_id = random.choice(candidates)
-
-    # Находим объект Job и его длительность
-    target_job = next(j for j in jobs if j.id == target_job_id)
-
-    # Сумма длительностей всех остальных работ
-    total_other = sum(j.d_i for j in jobs if j.id != target_job_id)
+    # Сумма длительностей всех работ
+    total_sum = sum(j.d_i for j in jobs)
 
     # Новая длительность
-    new_duration = total_other * blowup_factor
-    target_job.d_i = new_duration
+    new_duration = int(total_sum * blowup_factor)
+    jobs[target_job_id].d_i = new_duration
 
     # Корректируем DPC: для всех дуг, где target_job_id — предшественник,
     # задержка должна быть не меньше новой длительности
     keys_to_update = []
     for (i, j), lij in precedence.items():
         if i == target_job_id:
-            keys_to_update.append((i, j, max(new_duration, lij)))
+            precedence[(i, j)] = max(new_duration, lij)
 
     for i, j, new_lij in keys_to_update:
         precedence[(i, j)] = new_lij
