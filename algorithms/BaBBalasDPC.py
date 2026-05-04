@@ -123,36 +123,57 @@ class BalasBaBDPC(Algorithm):
 
     def _update_heads_and_tails(self, data: Dict) -> bool:
         """
-        Усиливает головы и хвосты на основе всех DPC и sigma-отношений.
-        Использует self.dpc_pairs из базового класса.
+        Итеративно усиливает головы и хвосты до достижения фиксированной точки.
+        Максимальное число итераций = n (как в Беллмане-Форде).
         """
         changed = False
+        r = data['r']
+        q = data['q']
+        sigma = data['sigma']
 
-        # Обновление голов и хвостов на основе всех DPC-дуг
-        for (i, j) in self.dpc_pairs:
-            lij = self.l_matrix[i][j]
-            # Прямой проход: r_j := max(r_j, r_i + l_ij)
-            new_rj = data['r'][i] + lij
-            if new_rj > data['r'][j] + 1e-9:
-                data['r'][j] = new_rj
-                changed = True
-            # Обратный проход: q_i := max(q_i, q_j + l_ij)
-            new_qi = data['q'][j] + lij
-            if new_qi > data['q'][i] + 1e-9:
-                data['q'][i] = new_qi
-                changed = True
-
-        # Учёт sigma-отношений
-        for i, next_set in data['sigma'].items():
+        # Предварительно вычисляем задержки для sigma-отношений
+        sigma_delays = {}
+        for i, next_set in sigma.items():
             for j in next_set:
-                new_rj = data['r'][i] + self.jobs[i].d_i
-                if new_rj > data['r'][j] + 1e-9:
-                    data['r'][j] = new_rj
-                    changed = True
-                new_qi = data['q'][j] + self.jobs[i].d_i
-                if new_qi > data['q'][i] + 1e-9:
-                    data['q'][i] = new_qi
-                    changed = True
+                if (i, j) in self.dpc_pairs:
+                    sigma_delays[(i, j)] = self.l_matrix[i][j]
+                else:
+                    sigma_delays[(i, j)] = self.jobs[i].d_i
+
+        # Не более n итераций (длина максимального пути в графе)
+        for _ in range(self.n):
+            local_changed = False
+
+            # Обновление на основе всех DPC-дуг
+            for (i, j) in self.dpc_pairs:
+                lij = self.l_matrix[i][j]
+
+                new_rj = r[i] + lij
+                if new_rj > r[j] + 1e-9:
+                    r[j] = new_rj
+                    local_changed = True
+
+                new_qi = q[j] + lij
+                if new_qi > q[i] + 1e-9:
+                    q[i] = new_qi
+                    local_changed = True
+
+            # Обновление на основе sigma-отношений (только если не DPC)
+            for (i, j), delay in sigma_delays.items():
+                new_rj = r[i] + delay
+                if new_rj > r[j] + 1e-9:
+                    r[j] = new_rj
+                    local_changed = True
+
+                new_qi = q[j] + delay
+                if new_qi > q[i] + 1e-9:
+                    q[i] = new_qi
+                    local_changed = True
+
+            if local_changed:
+                changed = True
+            else:
+                break
 
         return changed
 
@@ -221,7 +242,7 @@ class BalasBaBDPC(Algorithm):
 
         # Проверка условий сильного ветвления (Теорема 3.1)
         can_use_strong = self._check_strong_branching_conditions(
-            critical_info, data, schedule, start_times, makespan
+            critical_info, data, start_times
         )
 
         if can_use_strong:
@@ -230,6 +251,24 @@ class BalasBaBDPC(Algorithm):
         else:
             # Попытка обратной задачи
             reverse_data = self._create_reverse_problem(data)
+
+            # СОХРАНЯЕМ оригинальные l_matrix и dpc_pairs
+            original_l_matrix = self.l_matrix
+            original_dpc_pairs = self.dpc_pairs
+            original_incoming = self._incoming_dpc
+            original_outgoing = self._outgoing_dpc
+
+            # ПОДМЕНЯЕМ на обратные
+            self.l_matrix = reverse_data['l_matrix']
+            self.dpc_pairs = reverse_data['dpc_pairs']
+            self._incoming_dpc = defaultdict(list)
+            self._outgoing_dpc = defaultdict(list)
+            for (i, j) in self.dpc_pairs:
+                if i in self.jobs and j in self.jobs:
+                    lij = self.l_matrix[i][j]
+                    self._incoming_dpc[j].append((i, lij))
+                    self._outgoing_dpc[i].append((j, lij))
+
             self._update_heads_and_tails(reverse_data)
             rev_schedule, rev_makespan, rev_starts = self._longest_tail_heuristic(reverse_data)
 
@@ -237,10 +276,16 @@ class BalasBaBDPC(Algorithm):
                 rev_schedule, rev_starts, rev_makespan, reverse_data
             )
 
+            # ВОССТАНАВЛИВАЕМ оригинальные
+            self.l_matrix = original_l_matrix
+            self.dpc_pairs = original_dpc_pairs
+            self._incoming_dpc = original_incoming
+            self._outgoing_dpc = original_outgoing
+
             if (rev_critical is not None and
-                self._check_strong_branching_conditions(
-                    rev_critical, reverse_data, rev_schedule, rev_starts, rev_makespan
-                )):
+                    self._check_strong_branching_conditions(
+                        rev_critical, reverse_data, rev_starts
+                    )):
                 self.strong_branches += 1
                 rev_c = rev_critical['c']
                 rev_J = rev_critical['J']
@@ -479,11 +524,7 @@ class BalasBaBDPC(Algorithm):
     # =====================================================================
 
     def _check_strong_branching_conditions(self, critical_info: Dict, data: Dict,
-                                           schedule: List[int], start_times: Dict[int, float],
-                                           C_max: float) -> bool:
-        """
-        Проверяет условия Теоремы 3.1 для сильного ветвления.
-        """
+                                           start_times: Dict[int, float]) -> bool:
         critical_path = critical_info['critical_path']
         c = critical_info['c']
         J = critical_info['J']
@@ -500,8 +541,13 @@ class BalasBaBDPC(Algorithm):
         segment = critical_path[c_index:]
         for k in range(len(segment) - 1):
             u, v = segment[k], segment[k + 1]
+            # DPC-дуга
             if (u, v) in self.dpc_pairs:
                 return False
+            # Sigma-дуга (добавленное отношение)
+            if v in data['sigma'].get(u, set()):
+                return False
+            # Обычная дуга (v начинается сразу после u)
             if abs(start_times[v] - (start_times[u] + self.jobs[u].d_i)) < 1e-9:
                 return False
 
@@ -526,21 +572,37 @@ class BalasBaBDPC(Algorithm):
             return
 
         # Ветвь 1: c -> все J (c precedes all J)
+        # σ(c) := σ(c) ∪ J
         data1 = self._copy_data(data)
         for j in J:
             self._add_precedence(data1, c, j)
+            # Обновляем r_j
             required_rj = data1['r'][c] + self.jobs[c].d_i
             if (c, j) in self.dpc_pairs:
                 required_rj = data1['r'][c] + self.l_matrix[c][j]
             if required_rj > data1['r'][j]:
                 data1['r'][j] = required_rj
+            # Симметрично обновляем q_c
+            required_qc = data1['q'][j] + self.jobs[j].d_i
+            if (c, j) in self.dpc_pairs:
+                required_qc = data1['q'][j] + self.l_matrix[c][j]
+            if required_qc > data1['q'][c]:
+                data1['q'][c] = required_qc
         self._update_heads_and_tails(data1)
         self._branch_and_bound(data1, upper_bound, depth)
 
         # Ветвь 2: все J -> c (c succeeds all J)
+        # π(c) := π(c) ∪ J
         data2 = self._copy_data(data)
         for j in J:
             self._add_precedence(data2, j, c)
+            # Обновляем r_c (J предшествуют c, поэтому голова c зависит от J)
+            required_rc = data2['r'][j] + self.jobs[j].d_i
+            if (j, c) in self.dpc_pairs:
+                required_rc = data2['r'][j] + self.l_matrix[j][c]
+            if required_rc > data2['r'][c]:
+                data2['r'][c] = required_rc
+            # Симметрично обновляем q_j
             required_qj = data2['q'][c] + self.jobs[c].d_i
             if (j, c) in self.dpc_pairs:
                 required_qj = data2['q'][c] + self.l_matrix[j][c]
@@ -567,13 +629,16 @@ class BalasBaBDPC(Algorithm):
              if self.jobs[k].d_i > upper_bound - h_J}
 
         for k in K:
+            # Тест 1: r_c + d_c + sum_d_J + q_k >= UB  =>  k succeeds J (J -> k)
             if r[c] + self.jobs[c].d_i + sum_d_J + q[k] >= upper_bound - 1e-6:
                 for j in J:
-                    self._add_precedence(data, k, j)
+                    self._add_precedence(data, j, k)  # J предшествуют k
                 return True
+
+            # Тест 2: min_r_J + sum_d_J + d_k + q_k >= UB  =>  k precedes J (k -> J)
             if min_r_J + sum_d_J + self.jobs[k].d_i + q[k] >= upper_bound - 1e-6:
                 for j in J:
-                    self._add_precedence(data, j, k)
+                    self._add_precedence(data, k, j)  # k предшествует J
                 return True
 
         return False
@@ -583,14 +648,30 @@ class BalasBaBDPC(Algorithm):
     # =====================================================================
 
     def _create_reverse_problem(self, data: Dict) -> Dict:
-        """Создаёт обратную задачу."""
+        """
+        Создаёт обратную задачу: меняет r<->q, sigma<->pi, и инвертирует l_matrix.
+        L_rev(j, i) = L(i, j) - d_i + d_j  (как в статье, стр. 10)
+        """
         r = data['r']
         q = data['q']
+
+        # Инвертированная матрица задержек
+        rev_l_matrix = defaultdict(lambda: defaultdict(float))
+        for (i, j) in self.dpc_pairs:
+            lij = self.l_matrix[i][j]
+            rev_lji = lij - self.jobs[i].d_i + self.jobs[j].d_i
+            rev_l_matrix[j][i] = rev_lji
+
+        # Инвертированные пары DPC
+        rev_dpc_pairs = {(j, i) for (i, j) in self.dpc_pairs}
+
         return {
             'r': {j: q[j] for j in self.jobs},
             'q': {j: r[j] for j in self.jobs},
             'sigma': {k: set(v) for k, v in data['pi'].items()},
             'pi': {k: set(v) for k, v in data['sigma'].items()},
+            'l_matrix': rev_l_matrix,
+            'dpc_pairs': rev_dpc_pairs,
         }
 
     def _apply_strong_branching_reversed(self, data: Dict, c: int, J: Set[int],
@@ -613,22 +694,36 @@ class BalasBaBDPC(Algorithm):
                 self.pruned_by_test += 1
                 return
 
-        # Ветвь 1: все J -> c
+        # Ветвь 1: все J -> c (J precede c)
         data1 = self._copy_data(data)
         for j in J:
             self._add_precedence(data1, j, c)
+            # Обновляем r_c
             required_rc = data1['r'][j] + self.jobs[j].d_i
             if (j, c) in self.dpc_pairs:
                 required_rc = data1['r'][j] + self.l_matrix[j][c]
             if required_rc > data1['r'][c]:
                 data1['r'][c] = required_rc
+            # Симметрично обновляем q_j
+            required_qj = data1['q'][c] + self.jobs[c].d_i
+            if (j, c) in self.dpc_pairs:
+                required_qj = data1['q'][c] + self.l_matrix[j][c]
+            if required_qj > data1['q'][j]:
+                data1['q'][j] = required_qj
         self._update_heads_and_tails(data1)
         self._branch_and_bound(data1, upper_bound, depth)
 
-        # Ветвь 2: c -> все J
+        # Ветвь 2: c -> все J (c precede J)
         data2 = self._copy_data(data)
         for j in J:
             self._add_precedence(data2, c, j)
+            # Обновляем r_j
+            required_rj = data2['r'][c] + self.jobs[c].d_i
+            if (c, j) in self.dpc_pairs:
+                required_rj = data2['r'][c] + self.l_matrix[c][j]
+            if required_rj > data2['r'][j]:
+                data2['r'][j] = required_rj
+            # Симметрично обновляем q_c
             required_qc = data2['q'][j] + self.jobs[j].d_i
             if (c, j) in self.dpc_pairs:
                 required_qc = data2['q'][j] + self.l_matrix[c][j]
@@ -786,42 +881,57 @@ class BalasBaBDPC(Algorithm):
         changed = False
         r = data['r']
         q = data['q']
-        n = len(schedule)
+        sigma = data['sigma']
+        pi = data['pi']
 
-        # Предварительно вычисляем, есть ли essential дуги между соседними работами
-        has_essential_between = {}
-        for k_idx in range(n - 1):
-            u, v = schedule[k_idx], schedule[k_idx + 1]
-            has_essential_between[k_idx] = self._is_essential_precedence_arc(
-                u, v, data, start_times, C_max
-            )
+        # Находим критический путь
+        critical_info = self._find_critical_path(schedule, start_times, C_max, data)
+        if critical_info is None or critical_info['c'] == 0:
+            return False
 
-        # Префиксные суммы для быстрой проверки сегментов
-        # prefix[i] = True, если в сегменте [0, i) есть essential дуга
-        prefix_essential = [False] * (n + 1)
-        for i in range(1, n):
-            prefix_essential[i + 1] = prefix_essential[i] or has_essential_between.get(i - 1, False)
+        critical_path = critical_info['critical_path']
 
-        def segment_has_essential_fast(start: int, end: int) -> bool:
-            """Проверяет, есть ли essential дуга в сегменте [start, end)."""
+        # Предварительно вычисляем essential дуги на критическом пути
+        cp_has_essential = [False] * len(critical_path)
+        for k in range(len(critical_path) - 1):
+            u, v = critical_path[k], critical_path[k + 1]
+            cp_has_essential[k] = self._is_essential_precedence_arc(u, v, data, start_times, C_max)
+
+        # Префиксные суммы для быстрой проверки сегментов критического пути
+        cp_prefix = [False] * (len(critical_path) + 1)
+        for i in range(1, len(critical_path)):
+            cp_prefix[i + 1] = cp_prefix[i] or cp_has_essential[i - 1]
+
+        def cp_segment_has_essential(start: int, end: int) -> bool:
             if start >= end:
                 return False
-            return prefix_essential[end] != prefix_essential[start + 1] or has_essential_between.get(start, False)
+            return cp_prefix[end] != cp_prefix[start + 1] or cp_has_essential[start]
 
-        # Proposition 3.3 (прямой проход)
-        for idx, j in enumerate(schedule):
-            K = schedule[idx + 1:]
+        # Proposition 3.3 (прямой проход по критическому пути)
+        for idx, j in enumerate(critical_path):
+            K = critical_path[idx + 1:]
             if not K:
                 continue
 
-            if segment_has_essential_fast(idx, n - 1):
+            if cp_segment_has_essential(idx, len(critical_path) - 1):
                 continue
 
             q_j = q[j]
             t_j = start_times[j]
-            if all(q[k] >= q_j - 1e-9 and r[k] >= t_j - 1e-9 for k in K):
+
+            # Проверяем условия: q_k >= q_j для всех k, и r_k >= t_j для k не в σ(j)
+            conditions_hold = True
+            for k in K:
+                if q[k] < q_j - 1e-9:
+                    conditions_hold = False
+                    break
+                if k not in sigma.get(j, set()) and r[k] < t_j - 1e-9:
+                    conditions_hold = False
+                    break
+
+            if conditions_hold:
                 for k in K:
-                    if k not in data['sigma'].get(j, set()):
+                    if k not in sigma.get(j, set()):
                         self._add_precedence(data, j, k)
                         required_rk = t_j + self.jobs[j].d_i
                         if (j, k) in self.dpc_pairs:
@@ -830,25 +940,36 @@ class BalasBaBDPC(Algorithm):
                             r[k] = required_rk
                         changed = True
 
-        # Пересчитываем префиксы если были изменения
         if changed:
             return True
 
-        # Proposition 3.4 (обратный проход)
-        for idx in range(n - 1, -1, -1):
-            i = schedule[idx]
-            K = schedule[:idx]
+        # Proposition 3.4 (обратный проход по критическому пути)
+        for idx in range(len(critical_path) - 1, -1, -1):
+            i = critical_path[idx]
+            K = critical_path[:idx]
             if not K:
                 continue
 
-            if segment_has_essential_fast(0, idx):
+            if cp_segment_has_essential(0, idx):
                 continue
 
             r_i = r[i]
+            q_i = q[i]
             t_i = start_times[i]
-            if all(r[k] >= r_i - 1e-9 and q[k] >= q[i] - 1e-9 for k in K):
+
+            # Проверяем условия: r_k >= r_i для всех k, и q_k >= q_i для k не в π(i)
+            conditions_hold = True
+            for k in K:
+                if r[k] < r_i - 1e-9:
+                    conditions_hold = False
+                    break
+                if k not in pi.get(i, set()) and q[k] < q_i - 1e-9:
+                    conditions_hold = False
+                    break
+
+            if conditions_hold:
                 for k in K:
-                    if i not in data['sigma'].get(k, set()):
+                    if i not in sigma.get(k, set()):
                         self._add_precedence(data, k, i)
                         required_qk = q[i] + self.jobs[i].d_i
                         if (k, i) in self.dpc_pairs:
