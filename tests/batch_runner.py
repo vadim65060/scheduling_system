@@ -31,7 +31,7 @@ from core.validator import validate_schedule
 from tests.jobs_loader import load_any
 
 BALAS_DPS_ALGO = BestOfHeuristics
-RTE_ALGO = BestOfHeuristics
+RTE_ALGO = BalasBaBDPC
 ALGORITHMS = {
     "BalasB&B DPC": BalasBaBDPC,
     # "LDepth": LDepth,
@@ -42,6 +42,7 @@ ALGORITHMS = {
     "BestH": BestOfHeuristics,
     # f'BalasHDPC({BALAS_DPS_ALGO.__name__ if BALAS_DPS_ALGO.__name__ != "BestOfHeuristics" else "BestH"})': BalasDPC,
 }
+
 
 # ----------------------------------------------------------------------
 # Запуск одного алгоритма
@@ -85,11 +86,11 @@ def run_single(path: str, algo_name: str, timeout: float = 30) -> Dict:
     )
     if not is_valid:
         print({"file": os.path.basename(path),
-            "algorithm": algo_name,
-            "C_max": float("inf"),
-            "time": 0,
-            "error": result,
-            "schedule": schedule,})
+               "algorithm": algo_name,
+               "C_max": float("inf"),
+               "time": 0,
+               "error": result,
+               "schedule": schedule, })
 
     return {
         "file": os.path.basename(path),
@@ -190,8 +191,9 @@ def final_comparison(results: List[Dict]):
     print("-" * 60)
 
     for algo, s in sorted(stats.items(), key=lambda x: x[1]["avg_C"]):
-        print(f"{algo:16} {s['tests']:7d} {s['avg_C']/best_algo[1]['avg_C']:6.2f} {s['avg_C']:8.2f} {s['min_C']:8.0f} "
-              f"{s['max_C']:8.0f} {s['avg_time']:10.3f}")
+        print(
+            f"{algo:16} {s['tests']:7d} {s['avg_C'] / best_algo[1]['avg_C']:6.2f} {s['avg_C']:8.2f} {s['min_C']:8.0f} "
+            f"{s['max_C']:8.0f} {s['avg_time']:10.3f}")
 
     print("\nЛучший алгоритм по среднему C_max:", best_algo[0])
 
@@ -309,7 +311,7 @@ def main():
         start = time.time()
         results = run_batch(folder, list(ALGORITHMS.keys()), limit)
         stats = final_comparison(results)
-        print(f'{time.time()-start}s')
+        print(f'{time.time() - start}s')
         csv_name = f"results/results_{os.path.basename(folder)}.csv"
         save_results_to_csv(results, csv_name)
         plot_results(stats)
@@ -317,8 +319,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-#      Алгоритм     Тестов  C_avg    C_min    C_max    t_avg (s)
-# LTH  BalasDPC         180  4716.16  3813.00  6848.00      0.983
-# MLTH BalasDPC         180  4720.85  3832.00  6822.00      1.011
-# ILTF BalasDPC         180  4759.04  3849.00  6787.00      0.989

@@ -1,14 +1,15 @@
 import os
 import random
-from jobs_loader import load_stg
+
+from .jobs_loader import load_stg
 
 
-def augment_from_stg(stg_path: str, lmax: int):
+def augment_from_stg(stg_path: str, lmax: int, p: float):
     """
     Загружает исходный STG и генерирует:
         r_i ∈ [1, 2000]
         q_i ∈ [1, 2000]
-        L(i,j) ∈ [t_i, lmax]
+        L(i,j) ∈ [d_i, lmax] с вероятностью p, иначе L(i,j) = d_i
     """
 
     jobs, precedence = load_stg(stg_path)
@@ -17,15 +18,18 @@ def augment_from_stg(stg_path: str, lmax: int):
     r = {}
     q = {}
     for job in jobs:
-        t_i = int(job.d_i)
+        d_i = int(job.d_i)
         r[job.id] = random.randint(1, 2000)
         q[job.id] = random.randint(1, 2000)
 
     # Генерируем L(i,j) на основе исходных дуг
     L = {}
     for (i, j), old_lij in precedence.items():
-        t_i = int([job.d_i for job in jobs if job.id == i][0])
-        L[(i, j)] = random.randint(t_i, max(t_i, lmax))
+        d_i = int([job.d_i for job in jobs if job.id == i][0])
+        if random.random() < p:
+            L[(i, j)] = random.randint(d_i, max(d_i, lmax))
+        else:
+            L[(i, j)] = d_i
 
     return jobs, r, q, L
 
@@ -47,7 +51,7 @@ def save_augmented(path: str, jobs, r, q, L):
             f.write(f"{i} {j} {lij}\n")
 
 
-def process_folder(stg_folder: str, out_folder: str, lmax: int = 50):
+def process_folder(stg_folder: str, out_folder: str, lmax: int = 50, p: float = 1):
     os.makedirs(out_folder, exist_ok=True)
 
     for fname in os.listdir(stg_folder):
@@ -57,7 +61,7 @@ def process_folder(stg_folder: str, out_folder: str, lmax: int = 50):
         in_path = os.path.join(stg_folder, fname)
         out_path = os.path.join(out_folder, fname.replace(".stg", ".astg"))
 
-        jobs, r, q, L = augment_from_stg(in_path, lmax)
+        jobs, r, q, L = augment_from_stg(in_path, lmax, p)
         save_augmented(out_path, jobs, r, q, L)
 
         print(f"✓ {fname} → {out_path}")

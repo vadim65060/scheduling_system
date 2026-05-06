@@ -20,9 +20,10 @@ from algorithms.lth import LTH
 from algorithms.mlth import MLTH
 from algorithms.rte import RTE
 from core.Algorithm import Algorithm
+from core.graph_validator import validate_graph
 from core.job import Job
 from core.validator import validate_schedule
-from tests.jobs_loader import load_any
+from tests.jobs_loader import load_any, generate_one_machine_dpc
 
 
 # =============================================================================
@@ -65,7 +66,7 @@ class TestConfig:
 
     # --- Профилирование ---
     SAVE_PROFILE = False
-    PRINT_PROFILE = False
+    PRINT_PROFILE = ALGO_CLASS is BalasBaBDPC
     PROFILE_TOP_N = 20  # Сколько строк профиля показывать
 
     # --- Сохранение результатов ---
@@ -121,7 +122,16 @@ def load_test_data(file_path: str) -> Tuple[List[Job], Dict[Tuple[int, int], flo
     """
     print(f"📂 Загрузка: {os.path.basename(file_path)}")
     jobs_list, precedence = load_any(file_path)
-
+    # seed=12 # 12
+    # while True:
+    #     jobs_list, precedence = generate_one_machine_dpc(100, d_max=50, r_max=500, q_max=500, p=0.01, l_max=100, seed=seed)
+    #     ok, errors = validate_graph(jobs_list, precedence)
+    #     if ok:
+    #         break
+    #
+    #     seed+=1
+    #
+    # print(f'seed: {seed}')
     print(f"   📊 Работ: {len(jobs_list)}")
     print(f"   📊 DPC:   {len(precedence)}")
 
@@ -161,17 +171,6 @@ def run_algorithm(
         precedence: Dict[Tuple[int, int], float],
         profile: bool = True
 ) -> Tuple[Optional[List[int]], float, Dict[str, Any], Optional[pstats.Stats]]:
-    """
-    Запускает выбранный алгоритм с опциональным профилированием.
-
-    Args:
-        jobs_list: Список работ
-        precedence: Ограничения предшествования
-        profile: Включить профилирование
-
-    Returns:
-        Кортеж (расписание, C_max, статистика, профиль)
-    """
     algo_name = TestConfig.ALGO_CLASS.__name__
     print(f"\n🚀 Запуск: {algo_name}")
     print(f"   ⏱️  Лимит: {TestConfig.TIME_LIMIT} сек")
@@ -187,7 +186,6 @@ def run_algorithm(
         profiler = cProfile.Profile()
         profiler.enable()
 
-    # Запуск алгоритма
     schedule, C_max, stats = algo.solve()
 
     # Визуализация для маленьких задач

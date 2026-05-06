@@ -16,6 +16,43 @@ from typing import List, Dict, Tuple, Optional
 from core.job import Job
 
 
+def generate_one_machine_dpc(
+        n: int,  # количество работ
+        d_max: int = 50,  # максимальная длительность
+        r_max: int = 2000,  # максимальное время появления
+        q_max: int = 2000,  # максимальное время доставки
+        p: float = 0.01,  # вероятность DPC
+        l_max: int = 100,  # максимальная задержка
+        seed: int = 42
+) -> Tuple[List[Job], Dict[Tuple[int, int], float]]:
+    """
+    Генерирует случайную одномашинную задачу с DPC.
+    По методологии Balas et al. (1995).
+    """
+    random.seed(seed)
+
+    # Генерируем работы (без каких-либо исходных дуг)
+    jobs = []
+    for i in range(n):
+        d_i = random.randint(1, d_max)
+        r_i = random.randint(1, r_max)
+        q_i = random.randint(1, q_max)
+        jobs.append(Job(id=i, r_i=r_i, d_i=d_i, q_i=q_i))
+
+    # Генерируем DPC-дуги СЛУЧАЙНО между работами
+    precedence = {}
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            if random.random() < p:
+                d_i = jobs[i].d_i
+                l_ij = random.randint(d_i, max(d_i, l_max))
+                precedence[(i, j)] = l_ij
+
+    return jobs, precedence
+
+
 # ======================================================================
 # Загрузчики конкретных форматов
 # ======================================================================
