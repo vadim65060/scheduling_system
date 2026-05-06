@@ -44,7 +44,7 @@ class BalasBaBDPC(Algorithm):
         self.pruned_by_bound = 0
         self.pruned_by_test = 0
 
-        self._compute_transitive_dpc()
+        # self._compute_transitive_dpc()
         # Списки входящих/исходящих DPC для быстрого доступа
         self._incoming_dpc = defaultdict(list)
         self._outgoing_dpc = defaultdict(list)
@@ -591,7 +591,7 @@ class BalasBaBDPC(Algorithm):
         J = critical_info['J']
 
         if c == 0 or not J:
-            if self._debug_count <= self._debug_limit:
+            if self._debug_count < self._debug_limit:
                 print(f"     [DEBUG CHECK] c={c}, J empty={not J}")
             return False
 
@@ -616,7 +616,7 @@ class BalasBaBDPC(Algorithm):
 
             # precedence = DPC или sigma (но НЕ immediate без DPC/sigma)
             if is_dpc or is_sigma:
-                if self._debug_count <= self._debug_limit:
+                if self._debug_count < self._debug_limit:
                     print(
                         f"     [DEBUG CHECK] ❌ Дуга ({u},{v}): DPC={is_dpc}, SIGMA={is_sigma}, immediate={is_immediate}")
                 return False
@@ -627,7 +627,7 @@ class BalasBaBDPC(Algorithm):
             t_i = start_times[i]
             r_i = data['r'][i]
             if r_i < max(t_i, t_c) - 1e-9:
-                if self._debug_count <= self._debug_limit:
+                if self._debug_count < self._debug_limit:
                     print(f"     [DEBUG CHECK] ❌ Условие 2: r_{i}={r_i} < max(s_{i}={t_i}, s_{c}={t_c})")
                 return False
 
@@ -823,13 +823,13 @@ class BalasBaBDPC(Algorithm):
             # 5. Ищем критический путь в обратной задаче
             rev_critical = self._find_critical_path(rev_schedule, rev_starts, reverse_data)
             if rev_critical is None or rev_critical['c'] == 0:
-                if self._debug_count <= self._debug_limit:
+                if self._debug_count < self._debug_limit:
                     print(f"     [REVERSE] critical is None or c=0")
                 return False
 
             # Проверяем условия сильного ветвления в обратной задаче
             if not self._check_strong_branching_conditions(rev_critical, reverse_data, rev_starts):
-                if self._debug_count <= self._debug_limit:
+                if self._debug_count < self._debug_limit:
                     # Выводим обратный критический путь
                     rev_cp = rev_critical['critical_path']
                     rev_c = rev_critical['c']
