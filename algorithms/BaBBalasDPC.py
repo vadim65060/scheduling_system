@@ -76,7 +76,7 @@ class BalasBaBDPC(Algorithm):
         # --- Шаг 1. Вычисление начальной верхней границы ---
         from copy import deepcopy
         boh = BestOfHeuristics(deepcopy(self.init_jobs), deepcopy(self.init_precedence))
-        boh_schedule, init_makespan, _ = None, 9999999, None  # boh.solve(**kwargs)
+        boh_schedule, init_makespan, _ = boh.solve(**kwargs)
 
         self.best_makespan = init_makespan
         self.best_schedule = boh_schedule.copy() if boh_schedule else None
