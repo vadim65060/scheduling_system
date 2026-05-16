@@ -5,7 +5,6 @@ Modified Longest Tail Heuristic (MLTH)
 """
 
 from typing import List, Dict, Tuple, Optional, Set
-from collections import defaultdict
 
 from core.utils import Timer
 from .lth import LTH
