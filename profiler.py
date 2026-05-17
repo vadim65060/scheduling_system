@@ -35,13 +35,15 @@ class TestConfig:
 
     # --- Выбор алгоритма ---
     # Доступные варианты: BalasBaBDPC, LTH, MLTH, ILTF, BestOfHeuristics, LDepth, RTE
-    ALGO_CLASS: Type[Algorithm] = ILTF
+    ALGO_CLASS: Type[Algorithm] = BalasBaBDPC
 
     # --- Путь к тестовому файлу ---
     # Можно указать конкретный файл или директорию
-    TEST_FILE = "tests/data/100_aug_l100/rand0003.astg"
+    TEST_FILE = "tests/data/100_aug_l100/rand0004.astg"
     # TEST_FILE = "tests/data/100_aug_l75/rand0050.astg"
     # TEST_FILE = "tests/data/100/rand0001.stg"
+    USE_RANDOM_TEST = False
+    INIT_SEED = 1
 
     # --- Режим тестирования ---
     # "single" - один файл, "batch" - все файлы в директории
@@ -60,7 +62,7 @@ class TestConfig:
     }
 
     # --- Параметры валидации ---
-    VALIDATE = True
+    VALIDATE = not USE_RANDOM_TEST
     STRICT_IDLE_CHECK = False  # True = все простои считаются ошибками
     VERBOSE_VALIDATION = True  # Показывать детальный отчёт валидации
 
@@ -75,7 +77,7 @@ class TestConfig:
 
     # --- Дополнительные настройки ---
     VISUALIZE_SMALL = True  # Визуализировать расписания для N <= 20
-    SHOW_DETAILED_SCHEDULE = True  # Показывать полное расписание в консоли
+    SHOW_DETAILED_SCHEDULE = False  # Показывать полное расписание в консоли
 
     @classmethod
     def ensure_output_dir(cls) -> None:
@@ -120,18 +122,22 @@ def load_test_data(file_path: str) -> Tuple[List[Job], Dict[Tuple[int, int], flo
     Returns:
         Кортеж (список заданий, словарь ограничений предшествования)
     """
-    print(f"📂 Загрузка: {os.path.basename(file_path)}")
-    jobs_list, precedence = load_any(file_path)
-    # seed=12 # 12
-    # while True:
-    #     jobs_list, precedence = generate_one_machine_dpc(100, d_max=50, r_max=500, q_max=500, p=0.01, l_max=100, seed=seed)
-    #     ok, errors = validate_graph(jobs_list, precedence)
-    #     if ok:
-    #         break
-    #
-    #     seed+=1
-    #
-    # print(f'seed: {seed}')
+    if TestConfig.USE_RANDOM_TEST:
+        seed = TestConfig.INIT_SEED
+        while True:
+            jobs_list, precedence = generate_one_machine_dpc(100, d_max=50, r_max=500, q_max=500, p=0.002, l_max=100,
+                                                             seed=seed)
+            ok, errors = validate_graph(jobs_list, precedence)
+            if ok:
+                break
+
+            seed += 1
+
+        print(f'seed: {seed}')
+    else:
+        print(f"📂 Загрузка: {os.path.basename(file_path)}")
+        jobs_list, precedence = load_any(file_path)
+
     print(f"   📊 Работ: {len(jobs_list)}")
     print(f"   📊 DPC:   {len(precedence)}")
 
