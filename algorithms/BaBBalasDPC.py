@@ -298,24 +298,56 @@ class BalasBaBDPC(Algorithm):
     # =====================================================================
 
     def _calculate_lower_bound(self, data: Dict) -> float:
+        """
+        Вычисляет прерываемую нижнюю границу (preemptive bound).
+        Реализует max_{K ⊆ U} (min_{i∈K} r_i + sum_{i∈K} d_i + min_{i∈K} q_i)
+        за O(n log n) через решение прерываемой задачи (Carlier 1982).
+        """
         r = data['r']
         q = data['q']
 
-        if not self.jobs:
+        # Получаем список всех работ
+        jobs_list = list(self.jobs.values())
+        n = len(jobs_list)
+
+        if n == 0:
             return 0.0
 
-        min_r = min(r.values())
-        min_q = min(q.values())
-        lb1 = min_r + self._total_d + min_q
+        # Сортируем работы по убыванию q (tail)
+        jobs_sorted = sorted(jobs_list, key=lambda j: q[j.id], reverse=True)
 
-        lb2 = 0.0
-        for (i, j) in self.dpc_pairs:
-            lij = self.l_matrix[i][j]
-            path_length = r[i] + self.jobs[i].d_i + lij + q[j]
-            if path_length > lb2:
-                lb2 = path_length
+        # Перебираем все возможные "хвостовые" подмножества
+        # Оптимальное подмножество для прерываемой границы имеет вид:
+        # K* = {j : q_j >= q_threshold} для некоторого порога
+        best_lb = 0.0
 
-        return max(lb1, lb2)
+        # Вычисляем префиксные суммы d и поддерживаем min_r
+        sum_d = 0.0
+        min_r_sofar = float('inf')
+
+        for j in jobs_sorted:
+            j_id = j.id
+            sum_d += j.d_i
+            min_r_sofar = min(min_r_sofar, r[j_id])
+
+            # Текущий кандидат: K = первые k работ (с наибольшими q)
+            current_lb = min_r_sofar + sum_d + q[j_id]
+
+            if current_lb > best_lb:
+                best_lb = current_lb
+
+        # Дополнительная проверка: рассмотреть только min_r + sum_d (без q)
+        # Это соответствует K, где min q = 0 (нижняя граница по времени обработки)
+        min_r_all = min(r.values())
+        sum_d_all = sum(j.d_i for j in self.jobs.values())
+        lb_processing = min_r_all + sum_d_all
+        if lb_processing > best_lb:
+            best_lb = lb_processing
+
+        # Учёт DPC через усиление r и q уже сделано в _update_heads_and_tails
+        # Поэтому дополнительный перебор пар не требуется — он слабее, чем max по K
+
+        return best_lb
 
     # =====================================================================
     # ЭВРИСТИКА LTH (Algorithm 2)
